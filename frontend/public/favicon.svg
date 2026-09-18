@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="DineSetu">
+  <rect width="512" height="512" fill="#0f766e"/>
+  <ellipse cx="256" cy="304" rx="168" ry="158" fill="#f3d36a"/>
+  <ellipse cx="256" cy="304" rx="168" ry="158" fill="none" stroke="#f4efe3" stroke-width="28"/>
+  <ellipse cx="256" cy="304" rx="78" ry="74" fill="#d9a432"/>
+  <ellipse cx="232" cy="280" rx="26" ry="18" fill="#f0d98a" opacity=".45"/>
+  <path fill="#f7f3ea" d="M178 368V214c0-86 156-86 156 0v154h-40V224c0-52-76-52-76 0v144z"/>
+  <path fill="#f7f3ea" d="M166 226c8-88 172-88 180 0v22c-10-68-158-68-180 0z"/>
+</svg>
