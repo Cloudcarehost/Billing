@@ -9,7 +9,7 @@ import { useRestaurantRealtime } from '../realtime/useRestaurantRealtime'
 import type { RestaurantEvent } from '../realtime/useRestaurantRealtime'
 import { api } from '../../lib/api'
 import type { ApiEnvelope, DiningTable, Outlet } from '../../types/api'
-import { acknowledgeWaiterCall } from '../../pages/opsShared'
+import { acknowledgeWaiterCall, isDirectBillOutlet } from '../../pages/opsShared'
 import { registerWaiterServiceWorker, subscribeWaiterPush } from './waiterAlerts'
 import { playFloorSound, soundFor, unlockFloorAlert } from './floorAlerts'
 
@@ -198,6 +198,7 @@ export function ReadyNotificationProvider({ children }: { children: ReactNode })
       return
     }
     if (event.type !== 'item_ready' || !session || seenRef.current.has(readyId)) return
+    if (isDirectBillOutlet(session.outlets, event.outlet_id)) return
 
     seenRef.current.add(readyId)
     const notification: ReadyNotification = {
@@ -260,6 +261,7 @@ export function ReadyNotificationProvider({ children }: { children: ReactNode })
       }
 
       const readyItems = readyItemsFrom(table)
+      if (isDirectBillOutlet(session.outlets, table.outlet_id)) continue
       const readyCount = table.active_session?.kitchen_progress?.ready ?? readyItems.length
       if (readyCount < 1) continue
 
@@ -321,7 +323,7 @@ export function ReadyNotificationProvider({ children }: { children: ReactNode })
         seenRef.current.delete(notification.id)
         return { ...notification, read: true, resolved: true }
       }
-      if (notification.kind === 'ready' && (table.active_session?.kitchen_progress?.ready ?? readyItemsFrom(table).length) < 1) {
+      if (notification.kind === 'ready' && (isDirectBillOutlet(session?.outlets, table.outlet_id) || (table.active_session?.kitchen_progress?.ready ?? readyItemsFrom(table).length) < 1)) {
         seenRef.current.delete(notification.id)
         return { ...notification, read: true, resolved: true }
       }

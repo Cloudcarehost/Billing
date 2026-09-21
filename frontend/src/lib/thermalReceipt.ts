@@ -7,6 +7,7 @@ export type ThermalReceiptInput = {
   outlet?: Pick<Outlet, 'name' | 'address'> | null
   cashier: string
   tableName: string
+  serviceLabel?: string
   invoice: Invoice
   items: ReceiptItem[]
   duplicate: boolean
@@ -65,7 +66,7 @@ export function printThermalReceipt(input: ThermalReceiptInput) {
 }
 
 export function thermalReceiptHtml(input: ThermalReceiptInput) {
-  const { hotel, outlet, cashier, tableName, invoice, duplicate } = input
+  const { hotel, outlet, cashier, tableName, invoice, duplicate, serviceLabel = 'Dine In' } = input
   const lines = aggregateReceiptItems(input.items)
   const totalQty = lines.reduce((sum, line) => sum + line.qty, 0)
   const billed = invoice.billed_at ? new Date(invoice.billed_at) : new Date()
@@ -102,7 +103,7 @@ html, body { width: 80mm; margin: 0; background: #fff; color: #111; font-family:
   ${place ? `<p class="center muted">${escapeHtml(place)}</p>` : ''}
   ${hotel.gstin ? `<p class="center muted">GSTIN: ${escapeHtml(hotel.gstin)}</p>` : ''}
   <p>Name: ${escapeHtml(invoice.customer_name?.trim() || '-')}</p>
-  <div class="meta"><span>Date: ${date}</span><span>Dine In: ${escapeHtml(tableName)}</span></div>
+  <div class="meta"><span>Date: ${date}</span><span>${escapeHtml(serviceLabel)}: ${escapeHtml(tableName)}</span></div>
   <div class="meta"><span>Time: ${time}</span></div>
   <div class="meta"><span>Cashier: ${escapeHtml(cashier)}</span><span>Bill No: ${escapeHtml(invoice.invoice_number)}</span></div>
   <hr class="rule" />

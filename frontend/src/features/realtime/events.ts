@@ -1,4 +1,4 @@
-export const RESTAURANT_EVENTS = ['session_opened', 'session_assigned', 'order_sent', 'item_preparing', 'item_ready', 'item_served', 'item_cancelled', 'bill_requested', 'invoice_created', 'table_closed', 'waiter_called', 'waiter_call_cleared'] as const
+export const RESTAURANT_EVENTS = ['session_opened', 'session_assigned', 'order_sent', 'item_preparing', 'item_ready', 'item_served', 'item_cancelled', 'bill_requested', 'invoice_created', 'invoice_reopened', 'table_closed', 'waiter_called', 'waiter_call_cleared', 'outlet_flow_changed'] as const
 export type RestaurantEventName = typeof RESTAURANT_EVENTS[number]
 export type RestaurantEvent = {
   schema_version?: 1

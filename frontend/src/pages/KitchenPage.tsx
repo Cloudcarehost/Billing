@@ -6,7 +6,7 @@ import { canCancelItem } from '../features/auth/permissions'
 import { useRestaurantRealtime } from '../features/realtime/useRestaurantRealtime'
 import { api, errorMessage } from '../lib/api'
 import type { ApiEnvelope, KitchenStation, OrderItem } from '../types/api'
-import { ConnectionState, unwrap, useOperationalRefresh } from './opsShared'
+import { ConnectionState, isDirectBillOutlet, unwrap, useOperationalRefresh } from './opsShared'
 import { applyKitchenQueue } from '../features/realtime/applyRestaurantEvent'
 import { playFloorSound, soundFor, unlockFloorAlert } from '../features/notifications/floorAlerts'
 
@@ -18,6 +18,7 @@ function groupKitchenTickets(items: KitchenItem[]) {
 
 export function KitchenPage() {
   const { session, activeOutletId } = useAuth()
+  const directBill = isDirectBillOutlet(session?.outlets, activeOutletId)
   const [stations, setStations] = useState<KitchenStation[]>([])
   const [stationId, setStationId] = useState<number | null>(null)
   const [items, setItems] = useState<KitchenItem[]>([])
@@ -36,8 +37,8 @@ export function KitchenPage() {
       window.removeEventListener('keydown', unlock)
     }
   }, [])
-  const loadStations = useCallback(async () => { try { const result = unwrap(await api.get<ApiEnvelope<KitchenStation[]>>('/api/v1/kitchen-stations', { params: { outlet_id: activeOutletId } })); setStations(result); setStationId((current) => current && result.some((station) => station.id === current) ? current : result[0]?.id ?? null) } catch (requestError) { setError(errorMessage(requestError)) } }, [activeOutletId])
-  const loadQueue = useCallback(async () => { if (!stationId) return; try { const result = unwrap(await api.get<ApiEnvelope<{ items: KitchenItem[] }>>(`/api/v1/kitchen-stations/${stationId}/queue`)); setItems(result.items) } catch (requestError) { setError(errorMessage(requestError)) } }, [stationId])
+  const loadStations = useCallback(async () => { if (directBill) { setStations([]); setStationId(null); setItems([]); return } try { const result = unwrap(await api.get<ApiEnvelope<KitchenStation[]>>('/api/v1/kitchen-stations', { params: { outlet_id: activeOutletId } })); setStations(result); setStationId((current) => current && result.some((station) => station.id === current) ? current : result[0]?.id ?? null) } catch (requestError) { setError(errorMessage(requestError)) } }, [activeOutletId, directBill])
+  const loadQueue = useCallback(async () => { if (directBill || !stationId) { if (directBill) setItems([]); return } try { const result = unwrap(await api.get<ApiEnvelope<{ items: KitchenItem[] }>>(`/api/v1/kitchen-stations/${stationId}/queue`)); setItems(result.items) } catch (requestError) { setError(errorMessage(requestError)) } }, [stationId, directBill])
   useEffect(() => { const task = window.setTimeout(() => void loadStations(), 0); return () => window.clearTimeout(task) }, [loadStations])
   useEffect(() => { const task = window.setTimeout(() => void loadQueue(), 0); return () => window.clearTimeout(task) }, [loadQueue])
   useEffect(() => { seenTicketIds.current = null }, [stationId])
@@ -49,7 +50,14 @@ export function KitchenPage() {
     seenTicketIds.current = new Set(items.map((item) => item.id))
   }, [items, session])
   const station = stations.find((entry) => entry.id === stationId)
-  const { status } = useRestaurantRealtime({ outletId: station?.outlet_id, stationId, onUpdate: (event) => {
+  const { status } = useRestaurantRealtime({ outletId: station?.outlet_id ?? activeOutletId, stationId, onUpdate: (event) => {
+    if (event.type === 'outlet_flow_changed') {
+      if (event.data?.order_flow === 'direct_bill' && (!event.outlet_id || event.outlet_id === activeOutletId)) {
+        setStations([]); setStationId(null); setItems([]); return
+      }
+      void loadStations(); void loadQueue(); return
+    }
+    if (directBill) return
     if (event.type === 'order_sent') setNotice('New kitchen ticket received.')
     if (event.type === 'connection_restored') { void loadQueue(); return }
     setItems((current) => {
@@ -76,9 +84,11 @@ export function KitchenPage() {
   const columns: Array<{ key: 'pending' | 'preparing' | 'ready'; label: string }> = [{ key: 'pending', label: 'New' }, { key: 'preparing', label: 'Preparing' }, { key: 'ready', label: 'Ready' }]
   const visible = filter === 'all' ? items : items.filter((item) => item.status === filter)
   return <section className="kitchen-page">
-    <div className="page-heading"><div><p className="eyebrow">KITCHEN DISPLAY SYSTEM</p><h1>Kitchen queue</h1><p>Only items routed to this station appear here.</p></div><ConnectionState status={status} /></div>
+    <div className="page-heading"><div><p className="eyebrow">KITCHEN DISPLAY SYSTEM</p><h1>Kitchen queue</h1><p>{directBill ? 'Kitchen display is paused while this outlet is on direct to bill.' : 'Only items routed to this station appear here.'}</p></div><ConnectionState status={status} /></div>
+    {directBill ? <div className="empty-state"><h2>Kitchen skipped for this outlet</h2><p>Orders go straight onto the bill. Switch the outlet back to Kitchen flow in Outlets settings when you need the full path.</p></div> : <>
     <div className="kitchen-toolbar"><div className="station-tabs">{stations.map((entry) => <button type="button" key={entry.id} onClick={() => setStationId(entry.id)} className={entry.id === stationId ? 'selected' : ''}>{entry.name}</button>)}</div><div className="status-filters"><button type="button" className={filter === 'all' ? 'selected' : ''} onClick={() => setFilter('all')}>All</button>{columns.map((column) => <button type="button" key={column.key} className={filter === column.key ? 'selected' : ''} onClick={() => setFilter(column.key)}>{column.label}</button>)}<button type="button" className="icon-refresh" onClick={() => void loadQueue()}><RefreshCw size={16} /></button></div></div>
     <div className="kitchen-columns">{columns.map((column) => { const columnItems = visible.filter((item) => item.status === column.key); return <section key={column.key}><h2>{column.label}<span>{columnItems.length}</span></h2><div className="kitchen-tickets">{groupKitchenTickets(columnItems).map((ticketItems) => <KitchenTicket key={`${column.key}-${ticketItems[0].id}`} items={ticketItems} now={clock} busyId={busyId} allowsCancel={(item) => canCancelItem(session, item)} onTransition={transition} onCancel={cancel} />)}</div></section> })}</div>
+    </>}
     <PromptDialog open={Boolean(cancelTarget)} title={`Cancel 1 × ${cancelTarget?.item_name ?? 'item'}`} description="Only this portion is cancelled. Other quantities of the same dish stay on the board." label="Required reason" type="textarea" minLength={3} confirmLabel="Cancel this portion" busy={busyId === cancelTarget?.id} onClose={() => setCancelTarget(null)} onConfirm={(reason) => void confirmKitchenCancel(reason)} />
     <Toast message={notice || error} tone={error ? 'error' : 'success'} onDismiss={() => { setNotice(''); setError('') }} />
   </section>

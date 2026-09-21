@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Bell, BookOpen, ChefHat, ClipboardList, LayoutDashboard, LogOut, Menu, Moon, Package, QrCode, Search, Settings, Store, Users, UtensilsCrossed, Wifi, WifiOff, X } from 'lucide-react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../features/auth/AuthContext'
 import { can, canAny, firstAccessiblePath, isOwner } from '../features/auth/permissions'
 import { api, errorMessage } from '../lib/api'
+import { useRestaurantRealtime } from '../features/realtime/useRestaurantRealtime'
 import { AlertCapability, useReadyNotifications } from '../features/notifications/ReadyNotificationContext'
 import { FLOOR_SOUND_PREVIEWS, playFloorSound } from '../features/notifications/floorAlerts'
+import { unwrap, useOperationalRefresh } from '../pages/opsShared'
+import type { ApiEnvelope, DiningTable } from '../types/api'
 
 const navigation = [
   ['Dashboard', '/app', LayoutDashboard, 'dashboard.view'], ['Tables', '/app/tables', UtensilsCrossed, 'tables.view'], ['Orders', '/app/orders', ClipboardList, 'orders.create'], ['Kitchen display', '/app/kitchen', ChefHat, 'kitchen.view'], ['Billing', '/app/billing', BookOpen, 'billing.view'], ['Menu', '/app/menu', ChefHat, 'catalog.view'], ['Inventory', '/app/inventory', Package, 'inventory.view'], ['Reports', '/app/reports', LayoutDashboard, 'reports.view'], ['Customers', '/app/customers', Users, 'customers.view'],
@@ -24,21 +27,56 @@ function LiveClock({ timezone, businessDate }: { timezone: string; businessDate?
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { session, logout, refresh, activeOutletId, setActiveOutletId } = useAuth()
+  const { session, logout, refresh, setSession, activeOutletId, setActiveOutletId } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const [menuOpen, setMenuOpen] = useState(() => {
+    if (typeof window === 'undefined') return true
+    const stored = window.localStorage.getItem('dinesetu-nav-open')
+    if (stored === '0') return false
+    if (stored === '1') return true
+    return window.matchMedia('(min-width: 761px)').matches
+  })
   const [notificationsOpen, setNotificationsOpen] = useState(false)
-  const [menuOpen, setMenuOpen] = useState(false)
   const [online, setOnline] = useState(navigator.onLine)
   const [query, setQuery] = useState('')
   const [endDayMessage, setEndDayMessage] = useState('')
   const [endingDay, setEndingDay] = useState(false)
+  const [pendingBills, setPendingBills] = useState(0)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const drawerRef = useRef<HTMLElement>(null)
   const notificationRef = useRef<HTMLDivElement>(null)
   const { notifications, unreadCount, enableAlerts, markAllRead, openNotification, showAlertSetup, canInstall, installApp, dismissAlertSetup, pocketReady } = useReadyNotifications()
+  const canViewBilling = can(session, 'billing.view')
+  const loadPendingBills = useCallback(async () => {
+    if (!canViewBilling) { setPendingBills(0); return }
+    try {
+      const tables = unwrap(await api.get<ApiEnvelope<DiningTable[]>>('/api/v1/tables/status', { params: { outlet_id: activeOutletId } }))
+      setPendingBills(tables.filter((table) => table.display_status === 'pending_bill').length)
+    } catch {
+      /* keep last count */
+    }
+  }, [activeOutletId, canViewBilling])
+  const { status } = useRestaurantRealtime({
+    outletIds: session.outlets.map((outlet) => outlet.id),
+    onUpdate: (event) => {
+      if (event.type === 'bill_requested' || event.type === 'table_closed' || event.type === 'invoice_created' || event.type === 'connection_restored') {
+        void loadPendingBills()
+      }
+      if (event.type !== 'outlet_flow_changed' || !event.outlet_id) return
+      const flow = event.data?.order_flow
+      if (flow !== 'kitchen' && flow !== 'direct_bill') { void refresh(); return }
+      setSession({ ...session, outlets: session.outlets.map((outlet) => outlet.id === event.outlet_id ? { ...outlet, order_flow: flow } : outlet) })
+    },
+  })
+  useOperationalRefresh(loadPendingBills, status)
+  useEffect(() => { const task = window.setTimeout(() => void loadPendingBills(), 0); return () => window.clearTimeout(task) }, [loadPendingBills])
+  useEffect(() => { window.localStorage.setItem('dinesetu-nav-open', menuOpen ? '1' : '0') }, [menuOpen])
 
-  useEffect(() => { setMenuOpen(false); setNotificationsOpen(false) }, [location.pathname])
+  useEffect(() => {
+    setNotificationsOpen(false)
+    if (window.matchMedia('(max-width: 760px)').matches) setMenuOpen(false)
+  }, [location.pathname])
   useEffect(() => {
     if (!notificationsOpen) return
     const onPointer = (event: MouseEvent) => {
@@ -66,17 +104,19 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [])
   useEffect(() => {
     if (!menuOpen) return
+    const mobile = window.matchMedia('(max-width: 760px)').matches
     const previousOverflow = document.body.style.overflow
-    if (window.matchMedia('(max-width: 760px)').matches) document.body.style.overflow = 'hidden'
-    const first = drawerRef.current?.querySelector<HTMLElement>('a, button')
-    first?.focus()
+    if (mobile) {
+      document.body.style.overflow = 'hidden'
+      drawerRef.current?.querySelector<HTMLElement>('a, button')?.focus()
+    }
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
         setMenuOpen(false)
         return
       }
-      if (event.key !== 'Tab' || !drawerRef.current) return
+      if (!mobile || event.key !== 'Tab' || !drawerRef.current) return
       const nodes = Array.from(drawerRef.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled])'))
       if (!nodes.length) return
       const firstNode = nodes[0]
@@ -91,9 +131,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
     document.addEventListener('keydown', onKey)
     return () => {
-      document.body.style.overflow = previousOverflow
+      if (mobile) {
+        document.body.style.overflow = previousOverflow
+        menuButtonRef.current?.focus()
+      }
       document.removeEventListener('keydown', onKey)
-      menuButtonRef.current?.focus()
     }
   }, [menuOpen])
 
@@ -126,15 +168,22 @@ export function AppShell({ children }: { children: ReactNode }) {
     else if (can(session, 'catalog.view')) navigate(`/app/menu?q=${encoded}`)
     else if (can(session, 'tables.view')) navigate(`/app/tables?q=${encoded}`)
   }
+  const closeDrawerIfMobile = () => {
+    if (window.matchMedia('(max-width: 760px)').matches) setMenuOpen(false)
+  }
   const links = <>
-    <nav className="main-nav">{navigation.filter(([, , , permission]) => can(session, permission)).map(([label, path, Icon]) => <NavLink key={path} to={path} end={path === '/app'} className="nav-link" onClick={() => setMenuOpen(false)}><Icon size={17} />{label}</NavLink>)}</nav>
+    <nav className="main-nav">{navigation.filter(([, path, , permission]) => {
+      if (!can(session, permission)) return false
+      if (path === '/app/kitchen' && session.outlets.length > 0 && session.outlets.every((outlet) => outlet.order_flow === 'direct_bill')) return false
+      return true
+    }).map(([label, path, Icon]) => <NavLink key={path} to={path} end={path === '/app'} className="nav-link" onClick={closeDrawerIfMobile}><Icon size={17} />{label}{path === '/app/billing' && pendingBills > 0 ? <b className="nav-count">{pendingBills > 9 ? '9+' : pendingBills}</b> : null}</NavLink>)}</nav>
     <div className="sidebar-bottom">
-      {can(session, 'settings.manage') && <NavLink to="/app/settings/hotel" className="nav-link" onClick={() => setMenuOpen(false)}><Settings size={17} />Hotel settings</NavLink>}
-      {can(session, 'settings.manage') && <NavLink to="/app/settings/outlets" className="nav-link" onClick={() => setMenuOpen(false)}><Store size={17} />Outlets</NavLink>}
-      {can(session, 'users.view') && <NavLink to="/app/settings/staff" className="nav-link" onClick={() => setMenuOpen(false)}><Users size={17} />Staff access</NavLink>}
-      {isOwner(session) && <NavLink to="/app/settings/roles" className="nav-link" onClick={() => setMenuOpen(false)}><Settings size={17} />Roles & permissions</NavLink>}
-      {isOwner(session) && <NavLink to="/app/settings/table-qr" className="nav-link" onClick={() => setMenuOpen(false)}><QrCode size={17} />Table QR codes</NavLink>}
-      <NavLink to="/app/settings/account" className="nav-link" onClick={() => setMenuOpen(false)}><Users size={17} />My account</NavLink>
+      {can(session, 'settings.manage') && <NavLink to="/app/settings/hotel" className="nav-link" onClick={closeDrawerIfMobile}><Settings size={17} />Hotel settings</NavLink>}
+      {can(session, 'settings.manage') && <NavLink to="/app/settings/outlets" className="nav-link" onClick={closeDrawerIfMobile}><Store size={17} />Outlets</NavLink>}
+      {can(session, 'users.view') && <NavLink to="/app/settings/staff" className="nav-link" onClick={closeDrawerIfMobile}><Users size={17} />Staff access</NavLink>}
+      {isOwner(session) && <NavLink to="/app/settings/roles" className="nav-link" onClick={closeDrawerIfMobile}><Settings size={17} />Roles & permissions</NavLink>}
+      {isOwner(session) && <NavLink to="/app/settings/table-qr" className="nav-link" onClick={closeDrawerIfMobile}><QrCode size={17} />Table QR codes</NavLink>}
+      <NavLink to="/app/settings/account" className="nav-link" onClick={closeDrawerIfMobile}><Users size={17} />My account</NavLink>
       <div className="drawer-user">
         <span className="avatar">{initials}</span>
         <div><strong>{session.user.name}</strong><small>{session.role.name}</small></div>
@@ -146,20 +195,20 @@ export function AppShell({ children }: { children: ReactNode }) {
     </div>
   </>
 
-  return <div className="app-shell">
+  return <div className={`app-shell${menuOpen ? '' : ' nav-collapsed'}`}>
     {menuOpen && <button type="button" className="nav-overlay" aria-label="Close menu" onClick={() => setMenuOpen(false)} />}
     <aside ref={drawerRef} id="app-navigation" className={`sidebar ${menuOpen ? 'open' : ''}`}>
       <div className="drawer-heading">
-        <NavLink to={homePath} className="brand" onClick={() => setMenuOpen(false)}><span className="brand-mark"><img src="/icon-192.png" alt="" width="32" height="32" /></span><span><strong>DineSetu</strong><small>{session.hotel.name}</small></span></NavLink>
+        <NavLink to={homePath} className="brand" onClick={closeDrawerIfMobile}><span className="brand-mark"><img src="/icon-192.png" alt="" width="32" height="32" /></span><span><strong>DineSetu</strong><small>{session.hotel.name}</small></span></NavLink>
         <button type="button" className="drawer-close" aria-label="Close menu" onClick={() => setMenuOpen(false)}><X size={18} /></button>
       </div>
       {links}
     </aside>
     <main className="main-area">
       <header className="topbar">
-        {session.outlets.length > 0 && <label className="outlet-switcher"><Store size={15} /><select aria-label="Current outlet" value={activeOutletId ?? ''} onChange={(event) => setActiveOutletId(Number(event.target.value))}>{session.outlets.map((outlet) => <option key={outlet.id} value={outlet.id}>{outlet.name}</option>)}</select></label>}
         <button ref={menuButtonRef} className="mobile-menu" type="button" aria-label={menuOpen ? 'Close menu' : 'Open menu'} aria-expanded={menuOpen} aria-controls="app-navigation" onClick={() => setMenuOpen((open) => !open)}><Menu size={20} /></button>
         {showSearch && <form className="global-search" onSubmit={submitSearch}><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search table, order, or menu item…" aria-label="Search tables, orders, or menu" /></form>}
+        {session.outlets.length > 0 && <label className="outlet-switcher"><Store size={15} /><select aria-label="Current outlet" value={activeOutletId ?? ''} onChange={(event) => setActiveOutletId(Number(event.target.value))}>{session.outlets.map((outlet) => <option key={outlet.id} value={outlet.id}>{outlet.name}</option>)}</select></label>}
         <div className="topbar-actions"><LiveClock timezone={session.hotel.timezone || 'Asia/Kolkata'} businessDate={session.hotel.current_business_date} /><div className="notification-center" ref={notificationRef}><button type="button" className="icon-button" aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ''}`} aria-expanded={notificationsOpen} aria-controls="notification-panel" onClick={() => setNotificationsOpen((open) => !open)}><Bell size={19} />{unreadCount > 0 && <b>{unreadCount > 9 ? '9+' : unreadCount}</b>}</button>{notificationsOpen && <section id="notification-panel" className="notification-panel" role="dialog" aria-label="Floor notifications"><header><div><strong>Floor alerts</strong><small>Ready food and guest waiter calls</small></div><div className="notification-header-actions">{unreadCount > 0 && <button type="button" onClick={markAllRead}>Mark all read</button>}<button type="button" className="icon-button" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}><X size={16} /></button></div></header><button type="button" className="enable-alerts" onClick={() => void enableAlerts()}><Bell size={14} />Enable sound, vibrate & pocket alerts</button><AlertCapability /><div className="sound-preview"><p>Tap to hear options. This does not change kitchen or billing.</p><div>{FLOOR_SOUND_PREVIEWS.map((option) => <button type="button" key={option.id} onClick={() => playFloorSound(option.id)}><strong>{option.label}</strong><small>{option.hint}</small></button>)}</div></div><div className="notification-list">{notifications.length ? notifications.map((notification) => <button type="button" key={notification.id} className={!notification.read && !notification.resolved ? 'unread' : ''} onClick={() => { openNotification(notification); setNotificationsOpen(false) }}><span className="notification-icon"><Bell size={14} /></span><span><strong>{notification.tableName}</strong><small>{notification.kind === 'waiter_call' ? (notification.resolved ? 'Waiter call seen' : 'Guest called the waiter') : `${notification.quantity} × ${notification.itemName}${notification.resolved ? ' · Served' : ''}`}</small><time>{new Date(notification.receivedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: session.hotel.timezone || 'Asia/Kolkata' })}</time></span></button>) : <p>No floor alerts yet.</p>}</div></section>}</div><NavLink to="/app/settings/account" className="user-menu" aria-label="Open my account"><span className="avatar">{initials}</span><span><strong>{session.user.name}</strong><small>{session.role.name}</small></span></NavLink><button type="button" className="logout-compact" onClick={() => { void logout().then(() => navigate('/login')) }} aria-label="Sign out"><LogOut size={17} /></button></div>
       </header>
       <div className="page-content">

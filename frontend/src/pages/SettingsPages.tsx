@@ -1,7 +1,7 @@
 import { Check, CirclePlus, MonitorSmartphone, Pencil, ShieldAlert, ShieldCheck, Store, Trash2, UserPlus, Users } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent, InputHTMLAttributes, ReactNode } from 'react'
-import { Modal } from '../components/ui/Feedback'
+import { Modal, ConfirmDialog } from '../components/ui/Feedback'
 import { useAuth } from '../features/auth/AuthContext'
 import { can, isOwner } from '../features/auth/permissions'
 import { api, errorMessage } from '../lib/api'
@@ -30,39 +30,67 @@ export function AccountSecurityPage() {
 }
 
 export function OutletsPage() {
+  const { refresh } = useAuth()
   const [outlets, setOutlets] = useState<Outlet[]>([])
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<Outlet | null>(null)
+  const [pendingSwitch, setPendingSwitch] = useState<FormData | null>(null)
+  const [deleting, setDeleting] = useState<Outlet | null>(null)
   const load = () => api.get<ApiEnvelope<Outlet[]>>('/api/v1/outlets').then((response) => setOutlets(response.data.data)).catch((err) => setError(errorMessage(err)))
   useEffect(() => { const task = window.setTimeout(() => { void load() }, 0); return () => window.clearTimeout(task) }, [])
-  function closeForm() { setAdding(false); setEditing(null) }
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const form = event.currentTarget
-    const values = new FormData(form)
+  function closeForm() { setAdding(false); setEditing(null); setPendingSwitch(null) }
+  async function saveOutlet(values: FormData) {
     const data = {
       name: String(values.get('name')),
       code: String(values.get('code')),
       invoice_prefix: String(values.get('invoice_prefix')),
       address: String(values.get('address') || '') || null,
       is_active: values.has('is_active'),
+      order_flow: String(values.get('order_flow') || 'kitchen'),
     }
     setError('')
     try {
       if (editing) await api.put(`/api/v1/outlets/${editing.id}`, data)
       else await api.post('/api/v1/outlets', data)
-      form.reset()
       const wasEditing = Boolean(editing)
       closeForm()
       setMessage(wasEditing ? 'Outlet settings updated.' : 'Outlet created.')
       await load()
+      await refresh()
     } catch (err) {
       setError(errorMessage(err))
     }
   }
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = event.currentTarget
+    const values = new FormData(form)
+    const nextFlow = String(values.get('order_flow') || 'kitchen')
+    if (editing && editing.order_flow !== 'direct_bill' && nextFlow === 'direct_bill') {
+      setPendingSwitch(values)
+      return
+    }
+    await saveOutlet(values)
+  }
+  async function deleteOutlet() {
+    if (!deleting) return
+    setError('')
+    try {
+      await api.delete(`/api/v1/outlets/${deleting.id}`)
+      setMessage(`${deleting.name} deleted.`)
+      setDeleting(null)
+      closeForm()
+      await load()
+      await refresh()
+    } catch (err) {
+      setError(errorMessage(err))
+      setDeleting(null)
+    }
+  }
   const formOpen = adding || editing !== null
+  const onlyOutlet = outlets.length <= 1
   return <>
     <Header eyebrow="SETTINGS" title="Outlets" text="Set up each place that serves or bills guests." action={<button className="button button-primary" type="button" onClick={() => { setEditing(null); setAdding(true); setMessage('') }}><CirclePlus size={17} />Add outlet</button>} />
     <Modal open={formOpen} title={editing ? `Edit ${editing.name}` : 'Add outlet'} description={editing ? 'Update how this outlet appears on tickets and invoices.' : 'Create another restaurant, bar or counter that bills separately.'} onClose={closeForm}>
@@ -72,6 +100,7 @@ export function OutletsPage() {
           <Input label="Outlet code" name="code" required defaultValue={editing?.code ?? ''} />
           <Input label="Invoice prefix" name="invoice_prefix" required defaultValue={editing?.invoice_prefix ?? 'INV'} />
           <Input label="Address" name="address" defaultValue={editing?.address ?? ''} />
+          <label className="field"><span>Order flow</span><select name="order_flow" defaultValue={editing?.order_flow ?? 'kitchen'}><option value="kitchen">Kitchen (current steps)</option><option value="direct_bill">Direct to bill (skip kitchen)</option></select></label>
           <label className="check-row field-wide"><input type="checkbox" name="is_active" value="1" defaultChecked={editing?.is_active ?? true} />Active outlet</label>
         </div>
         <div className="form-action-row">
@@ -80,10 +109,12 @@ export function OutletsPage() {
         </div>
       </form>
     </Modal>
+    <ConfirmDialog open={Boolean(pendingSwitch)} title="Switch this outlet to direct to bill?" text="Open kitchen tickets for this outlet will leave the kitchen and go onto the bill. New orders skip kitchen and serve statuses until you switch back." confirmLabel="Switch to direct to bill" onClose={() => setPendingSwitch(null)} onConfirm={() => { if (pendingSwitch) void saveOutlet(pendingSwitch) }} />
+    <ConfirmDialog open={Boolean(deleting)} title={deleting ? `Delete ${deleting.name}?` : 'Delete outlet'} text="Empty outlets can be removed. If this outlet has tables, bills or history, deactivate it instead so past invoices stay intact." confirmLabel="Delete outlet" onClose={() => setDeleting(null)} onConfirm={() => void deleteOutlet()} />
     <Notice error={error} success={message} />
     <section className="data-card">
       <div className="data-card-heading"><Store size={19} /><h2>Your outlets</h2><span>{outlets.length} total</span></div>
-      <div className="data-list">{outlets.map((outlet) => <div className="data-row" key={outlet.id}><span className="row-icon"><Store size={18} /></span><div><strong>{outlet.name}</strong><small>{outlet.code} · Invoice prefix {outlet.invoice_prefix}</small></div><span className={`status-badge ${outlet.is_active ? 'status-green' : 'status-red'}`}>{outlet.is_active ? 'Active' : 'Inactive'}</span><button className="row-action" type="button" title={`Edit ${outlet.name}`} onClick={() => { setAdding(false); setEditing(outlet); setMessage(''); setError('') }}><Pencil size={16} /></button></div>)}{!outlets.length && <Empty text="No outlets found." />}</div>
+      <div className="data-list">{outlets.map((outlet) => <div className="data-row" key={outlet.id}><span className="row-icon"><Store size={18} /></span><div><strong>{outlet.name}</strong><small>{outlet.code} · Invoice prefix {outlet.invoice_prefix} · {outlet.order_flow === 'direct_bill' ? 'Direct to bill' : 'Kitchen flow'}</small></div><span className={`status-badge ${outlet.is_active ? 'status-green' : 'status-red'}`}>{outlet.is_active ? 'Active' : 'Inactive'}</span><span className="row-actions"><button className="row-action" type="button" title={`Edit ${outlet.name}`} onClick={() => { setAdding(false); setEditing(outlet); setMessage(''); setError('') }}><Pencil size={16} /></button><button className="row-action danger" type="button" disabled={onlyOutlet} title={onlyOutlet ? 'Keep at least one outlet' : `Delete ${outlet.name}`} onClick={() => { setDeleting(outlet); setError(''); setMessage('') }}><Trash2 size={16} /></button></span></div>)}{!outlets.length && <Empty text="No outlets found." />}</div>
     </section>
   </>
 }

@@ -80,7 +80,8 @@ export function CustomerTableStatusPage() {
   }, [refresh])
   const currency = status?.currency ?? 'INR'
   const money = (value: string) => new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(Number(value))
-  const hasReadyItem = Boolean(status?.active_order?.items.some((item) => item.status === 'ready'))
+  const skipKitchen = status?.order_flow === 'direct_bill'
+  const hasReadyItem = !skipKitchen && Boolean(status?.active_order?.items.some((item) => item.status === 'ready'))
   const callWaiter = async () => {
     if (calling || status?.waiter_called) return
     setCalling(true); setCallError('')
@@ -104,7 +105,7 @@ export function CustomerTableStatusPage() {
     {offline && <div className="customer-offline"><WifiOff size={16} />Offline — showing the last received status</div>}
     {!status?.active_order ? <div className="customer-empty"><CheckCircle2 size={48} /><h2>No active order</h2><p>This page will update automatically when an order is opened for this table.</p>{callButton}</div> : <>
       {status.active_order.bill_requested && <div className="customer-bill-requested"><CheckCircle2 size={18} />Bill requested. The counter is preparing it.</div>}
-      <section className="customer-items"><h2>Your order</h2>{status.active_order.items.map((item, index) => <div className={`customer-item ${item.status === 'ready' ? 'is-ready' : ''}`} key={`${item.name}-${index}`}><b>{Number(item.quantity)} ×</b><span><strong>{item.name}</strong><small className={`customer-item-status ${item.status}`}>{statusLabel[item.status] ?? item.status}</small>{item.status === 'ready' && <em className="customer-ready-call-note">Order is ready. If nobody has come to you, call waiter.</em>}</span>{item.status === 'ready' && <button type="button" className="button button-secondary customer-item-call" disabled={calling || Boolean(status.waiter_called) || offline} onClick={() => void callWaiter()}><BellRing size={14} />{status.waiter_called ? 'Waiter notified' : 'Call waiter'}</button>}</div>)}</section>
+      <section className="customer-items"><h2>Your order</h2>{status.active_order.items.map((item, index) => <div className={`customer-item ${!skipKitchen && item.status === 'ready' ? 'is-ready' : ''}`} key={`${item.name}-${index}`}><b>{Number(item.quantity)} ×</b><span><strong>{item.name}</strong>{!skipKitchen && <small className={`customer-item-status ${item.status}`}>{statusLabel[item.status] ?? item.status}</small>}{!skipKitchen && item.status === 'ready' && <em className="customer-ready-call-note">Order is ready. If nobody has come to you, call waiter.</em>}</span>{!skipKitchen && item.status === 'ready' && <button type="button" className="button button-secondary customer-item-call" disabled={calling || Boolean(status.waiter_called) || offline} onClick={() => void callWaiter()}><BellRing size={14} />{status.waiter_called ? 'Waiter notified' : 'Call waiter'}</button>}</div>)}</section>
       <section className="customer-totals"><div><span>Subtotal</span><strong>{money(status.active_order.subtotal)}</strong></div><div><span>Tax</span><strong>{money(status.active_order.tax)}</strong></div><div className="customer-grand-total"><span>Current total</span><strong>{money(status.active_order.total)}</strong></div></section>
       {callButton}
     </>}

@@ -40,7 +40,7 @@ export function tableWithSession(table: DiningTable, session: DiningSession | nu
 function patchSession(session: DiningSession, event: RestaurantEvent): DiningSession {
   const data = dataOf(event)
   const status = typeof data.session_status === 'string' ? data.session_status as DiningSession['status'] : session.status
-  const nextStatus = event.type === 'bill_requested' ? 'pending_bill' : event.type === 'table_closed' ? 'closed' : status
+  const nextStatus = event.type === 'bill_requested' ? 'pending_bill' : event.type === 'table_closed' ? 'closed' : event.type === 'invoice_reopened' ? 'occupied' : status
   const itemStatus = event.type === 'item_preparing' ? 'preparing' : event.type === 'item_ready' ? 'ready' : event.type === 'item_served' ? 'served' : event.type === 'item_cancelled' ? 'cancelled' : null
   const incoming = asItems(data.kitchen_items)
   let orders = session.orders ?? []
@@ -74,7 +74,7 @@ function patchSession(session: DiningSession, event: RestaurantEvent): DiningSes
     waiter_id: waiterId,
     waiter: waiterName ? { id: waiterId ?? session.waiter?.id ?? 0, name: waiterName } : session.waiter,
     kitchen_progress: progressFrom(event, session.kitchen_progress),
-    invoice: typeof data.invoice_id === 'number' ? { ...(session.invoice ?? { id: data.invoice_id, invoice_number: String(data.invoice_number ?? ''), status: 'issued', payment_status: 'unpaid', total_amount: String(data.current_total ?? session.total_amount), paid_amount: '0.00', balance_amount: String(data.current_total ?? session.total_amount) }), id: data.invoice_id, invoice_number: String(data.invoice_number ?? session.invoice?.invoice_number ?? '') } : session.invoice,
+    invoice: event.type === 'invoice_reopened' ? null : typeof data.invoice_id === 'number' ? { ...(session.invoice ?? { id: data.invoice_id, invoice_number: String(data.invoice_number ?? ''), status: 'issued', payment_status: 'unpaid', total_amount: String(data.current_total ?? session.total_amount), paid_amount: '0.00', balance_amount: String(data.current_total ?? session.total_amount) }), id: data.invoice_id, invoice_number: String(data.invoice_number ?? session.invoice?.invoice_number ?? '') } : session.invoice,
     orders,
   }
 }
@@ -173,6 +173,11 @@ export function applyKitchenQueue<T extends KitchenTicket>(items: T[], event: Re
   if (event.type === 'item_served' || event.type === 'item_cancelled') {
     if (event.station_id && stationId && event.station_id !== stationId) return { items, handled: true }
     return { items: event.item_id ? items.filter((item) => item.id !== event.item_id) : items, handled: true }
+  }
+
+  if (event.type === 'outlet_flow_changed') {
+    if (event.data?.order_flow === 'direct_bill') return { items: [], handled: true }
+    return { items, handled: false }
   }
 
   return { items, handled: true }
