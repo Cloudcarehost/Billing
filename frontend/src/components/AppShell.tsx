@@ -7,7 +7,7 @@ import { can, canAny, firstAccessiblePath, isOwner } from '../features/auth/perm
 import { api, errorMessage } from '../lib/api'
 import { useRestaurantRealtime } from '../features/realtime/useRestaurantRealtime'
 import { AlertCapability, useReadyNotifications } from '../features/notifications/ReadyNotificationContext'
-import { FLOOR_SOUND_PREVIEWS, playFloorSound } from '../features/notifications/floorAlerts'
+import { FLOOR_SOUND_PREVIEWS, playFloorSound, soundFor } from '../features/notifications/floorAlerts'
 import { unwrap, useOperationalRefresh } from '../pages/opsShared'
 import type { ApiEnvelope, DiningTable } from '../types/api'
 
@@ -48,15 +48,24 @@ export function AppShell({ children }: { children: ReactNode }) {
   const notificationRef = useRef<HTMLDivElement>(null)
   const { notifications, unreadCount, enableAlerts, markAllRead, openNotification, showAlertSetup, canInstall, installApp, dismissAlertSetup, pocketReady } = useReadyNotifications()
   const canViewBilling = can(session, 'billing.view')
+  const seenPendingBills = useRef<Set<number> | null>(null)
   const loadPendingBills = useCallback(async () => {
-    if (!canViewBilling) { setPendingBills(0); return }
+    if (!canViewBilling) { setPendingBills(0); seenPendingBills.current = null; return }
     try {
       const tables = unwrap(await api.get<ApiEnvelope<DiningTable[]>>('/api/v1/tables/status', { params: { outlet_id: activeOutletId } }))
-      setPendingBills(tables.filter((table) => table.display_status === 'pending_bill').length)
+      const pending = tables.filter((table) => table.display_status === 'pending_bill')
+      setPendingBills(pending.length)
+      const ids = new Set(pending.map((table) => table.active_session?.id).filter((id): id is number => Boolean(id)))
+      if (seenPendingBills.current) {
+        const arrived = [...ids].filter((id) => !seenPendingBills.current!.has(id))
+        if (arrived.length) playFloorSound(soundFor(session?.hotel, 'billing'))
+      }
+      seenPendingBills.current = ids
     } catch {
       /* keep last count */
     }
-  }, [activeOutletId, canViewBilling])
+  }, [activeOutletId, canViewBilling, session?.hotel])
+  useEffect(() => { seenPendingBills.current = null }, [activeOutletId])
   const { status } = useRestaurantRealtime({
     outletIds: session.outlets.map((outlet) => outlet.id),
     onUpdate: (event) => {
@@ -209,7 +218,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <button ref={menuButtonRef} className="mobile-menu" type="button" aria-label={menuOpen ? 'Close menu' : 'Open menu'} aria-expanded={menuOpen} aria-controls="app-navigation" onClick={() => setMenuOpen((open) => !open)}><Menu size={20} /></button>
         {showSearch && <form className="global-search" onSubmit={submitSearch}><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search table, order, or menu item…" aria-label="Search tables, orders, or menu" /></form>}
         {session.outlets.length > 0 && <label className="outlet-switcher"><Store size={15} /><select aria-label="Current outlet" value={activeOutletId ?? ''} onChange={(event) => setActiveOutletId(Number(event.target.value))}>{session.outlets.map((outlet) => <option key={outlet.id} value={outlet.id}>{outlet.name}</option>)}</select></label>}
-        <div className="topbar-actions"><LiveClock timezone={session.hotel.timezone || 'Asia/Kolkata'} businessDate={session.hotel.current_business_date} /><div className="notification-center" ref={notificationRef}><button type="button" className="icon-button" aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ''}`} aria-expanded={notificationsOpen} aria-controls="notification-panel" onClick={() => setNotificationsOpen((open) => !open)}><Bell size={19} />{unreadCount > 0 && <b>{unreadCount > 9 ? '9+' : unreadCount}</b>}</button>{notificationsOpen && <section id="notification-panel" className="notification-panel" role="dialog" aria-label="Floor notifications"><header><div><strong>Floor alerts</strong><small>Ready food and guest waiter calls</small></div><div className="notification-header-actions">{unreadCount > 0 && <button type="button" onClick={markAllRead}>Mark all read</button>}<button type="button" className="icon-button" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}><X size={16} /></button></div></header><button type="button" className="enable-alerts" onClick={() => void enableAlerts()}><Bell size={14} />Enable sound, vibrate & pocket alerts</button><AlertCapability /><div className="sound-preview"><p>Tap to hear options. This does not change kitchen or billing.</p><div>{FLOOR_SOUND_PREVIEWS.map((option) => <button type="button" key={option.id} onClick={() => playFloorSound(option.id)}><strong>{option.label}</strong><small>{option.hint}</small></button>)}</div></div><div className="notification-list">{notifications.length ? notifications.map((notification) => <button type="button" key={notification.id} className={!notification.read && !notification.resolved ? 'unread' : ''} onClick={() => { openNotification(notification); setNotificationsOpen(false) }}><span className="notification-icon"><Bell size={14} /></span><span><strong>{notification.tableName}</strong><small>{notification.kind === 'waiter_call' ? (notification.resolved ? 'Waiter call seen' : 'Guest called the waiter') : `${notification.quantity} × ${notification.itemName}${notification.resolved ? ' · Served' : ''}`}</small><time>{new Date(notification.receivedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: session.hotel.timezone || 'Asia/Kolkata' })}</time></span></button>) : <p>No floor alerts yet.</p>}</div></section>}</div><NavLink to="/app/settings/account" className="user-menu" aria-label="Open my account"><span className="avatar">{initials}</span><span><strong>{session.user.name}</strong><small>{session.role.name}</small></span></NavLink><button type="button" className="logout-compact" onClick={() => { void logout().then(() => navigate('/login')) }} aria-label="Sign out"><LogOut size={17} /></button></div>
+        <div className="topbar-actions"><LiveClock timezone={session.hotel.timezone || 'Asia/Kolkata'} businessDate={session.hotel.current_business_date} /><div className="notification-center" ref={notificationRef}><button type="button" className="icon-button" aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ''}`} aria-expanded={notificationsOpen} aria-controls="notification-panel" onClick={() => setNotificationsOpen((open) => !open)}><Bell size={19} />{unreadCount > 0 && <b>{unreadCount > 9 ? '9+' : unreadCount}</b>}</button>{notificationsOpen && <section id="notification-panel" className="notification-panel" role="dialog" aria-label="Floor notifications"><header><div><strong>Floor alerts</strong><small>Ready food and guest waiter calls</small></div><div className="notification-header-actions">{unreadCount > 0 && <button type="button" onClick={markAllRead}>Mark all read</button>}<button type="button" className="icon-button" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)}><X size={16} /></button></div></header><button type="button" className="enable-alerts" onClick={() => void enableAlerts()}><Bell size={14} />Enable sound, vibrate & pocket alerts</button><AlertCapability /><div className="sound-preview"><p>Tap to hear options. Change the live sounds in Hotel settings.</p><div>{FLOOR_SOUND_PREVIEWS.map((option) => <button type="button" key={option.id} onClick={() => playFloorSound(option.id)}><strong>{option.label}</strong><small>{option.hint}</small></button>)}</div></div><div className="notification-list">{notifications.length ? notifications.map((notification) => <button type="button" key={notification.id} className={!notification.read && !notification.resolved ? 'unread' : ''} onClick={() => { openNotification(notification); setNotificationsOpen(false) }}><span className="notification-icon"><Bell size={14} /></span><span><strong>{notification.tableName}</strong><small>{notification.kind === 'waiter_call' ? (notification.resolved ? 'Waiter call seen' : 'Guest called the waiter') : `${notification.quantity} × ${notification.itemName}${notification.resolved ? ' · Served' : ''}`}</small><time>{new Date(notification.receivedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: session.hotel.timezone || 'Asia/Kolkata' })}</time></span></button>) : <p>No floor alerts yet.</p>}</div></section>}</div><NavLink to="/app/settings/account" className="user-menu" aria-label="Open my account"><span className="avatar">{initials}</span><span><strong>{session.user.name}</strong><small>{session.role.name}</small></span></NavLink><button type="button" className="logout-compact" onClick={() => { void logout().then(() => navigate('/login')) }} aria-label="Sign out"><LogOut size={17} /></button></div>
       </header>
       <div className="page-content">
         {showAlertSetup && <aside className="waiter-alert-banner" role="status">

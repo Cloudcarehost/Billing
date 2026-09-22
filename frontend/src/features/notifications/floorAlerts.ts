@@ -95,7 +95,7 @@ export function playFloorSound(id: FloorSoundId) {
   startSound(id)
 }
 
-export type FloorAlertKind = 'kitchen' | 'ready' | 'call'
+export type FloorAlertKind = 'kitchen' | 'ready' | 'call' | 'billing'
 
 const SOUND_IDS: FloorSoundId[] = ['chirp', 'ding', 'double', 'chime', 'kitchen', 'waiter']
 
@@ -103,8 +103,10 @@ export function isFloorSoundId(value: unknown): value is FloorSoundId {
   return typeof value === 'string' && SOUND_IDS.includes(value as FloorSoundId)
 }
 
-export function soundFor(hotel: { alert_sound_kitchen?: string | null; alert_sound_ready?: string | null; alert_sound_call?: string | null } | null | undefined, kind: FloorAlertKind): FloorSoundId {
-  const chosen = kind === 'kitchen' ? hotel?.alert_sound_kitchen : kind === 'ready' ? hotel?.alert_sound_ready : hotel?.alert_sound_call
+export function soundFor(hotel: { alert_sound_kitchen?: string | null; alert_sound_ready?: string | null; alert_sound_call?: string | null; alert_sound_billing?: string | null } | null | undefined, kind: FloorAlertKind): FloorSoundId {
+  const chosen = kind === 'kitchen' ? hotel?.alert_sound_kitchen : kind === 'ready' ? hotel?.alert_sound_ready : kind === 'call' ? hotel?.alert_sound_call : hotel?.alert_sound_billing
   if (isFloorSoundId(chosen)) return chosen
-  return kind === 'kitchen' ? 'chirp' : 'waiter'
+  if (kind === 'kitchen') return 'chirp'
+  if (kind === 'billing') return 'double'
+  return 'waiter'
 }
