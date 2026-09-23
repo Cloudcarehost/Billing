@@ -16,6 +16,7 @@ const BillingPage = lazy(() => import('./pages/BillingPage').then((module) => ({
 const InventoryPage = lazy(() => import('./pages/PhaseThreePages').then((module) => ({ default: module.InventoryPage })))
 const LiveDashboardPage = lazy(() => import('./pages/PhaseThreePages').then((module) => ({ default: module.LiveDashboardPage })))
 const ReportsPage = lazy(() => import('./pages/PhaseThreePages').then((module) => ({ default: module.ReportsPage })))
+const MoneyPage = lazy(() => import('./pages/MoneyPage').then((module) => ({ default: module.MoneyPage })))
 const AccountSecurityPage = lazy(() => import('./pages/SettingsPages').then((module) => ({ default: module.AccountSecurityPage })))
 const HotelSettingsPage = lazy(() => import('./pages/SettingsPages').then((module) => ({ default: module.HotelSettingsPage })))
 const OutletsPage = lazy(() => import('./pages/SettingsPages').then((module) => ({ default: module.OutletsPage })))
@@ -56,6 +57,7 @@ function ProtectedApp() {
     <Route path="menu" element={<LazyRoute><PermissionRoute permission="catalog.view"><MenuPage /></PermissionRoute></LazyRoute>} />
     <Route path="inventory" element={<LazyRoute><PermissionRoute permission="inventory.view"><InventoryPage /></PermissionRoute></LazyRoute>} />
     <Route path="reports" element={<LazyRoute><PermissionRoute permission="reports.view"><ReportsPage /></PermissionRoute></LazyRoute>} />
+    <Route path="money" element={<LazyRoute><PermissionRoute permission="finance.view"><MoneyPage /></PermissionRoute></LazyRoute>} />
     <Route path="customers" element={<PermissionRoute permission="customers.view"><PlaceholderPage title="Customers" description="Customer management will be added with billing." /></PermissionRoute>} />
     <Route path="settings/hotel" element={<LazyRoute><PermissionRoute permission="settings.manage"><HotelSettingsPage /></PermissionRoute></LazyRoute>} />
     <Route path="settings/outlets" element={<LazyRoute><PermissionRoute permission="settings.manage"><OutletsPage /></PermissionRoute></LazyRoute>} />

@@ -119,13 +119,102 @@ export function OutletsPage() {
   </>
 }
 
+function roleLabel(role: Role) {
+  return role.is_owner ? `${role.name} — full admin for this hotel` : role.name
+}
+
+function payLabel(cycle?: string | null) {
+  if (cycle === 'daily') return 'daily'
+  if (cycle === 'weekly') return 'weekly'
+  if (cycle === 'monthly') return 'monthly'
+  return ''
+}
+
 export function StaffPage() {
-  const { session } = useAuth(); const [staff, setStaff] = useState<StaffMember[]>([]); const [roles, setRoles] = useState<Role[]>([]); const [adding, setAdding] = useState(false); const [error, setError] = useState(''); const [message, setMessage] = useState('')
+  const { session } = useAuth()
+  const [staff, setStaff] = useState<StaffMember[]>([])
+  const [roles, setRoles] = useState<Role[]>([])
+  const [outlets, setOutlets] = useState<Outlet[]>([])
+  const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<StaffMember | null>(null)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
   const mayManageStaff = can(session, 'users.manage')
-  const load = async () => { try { const [users, roleData] = await Promise.all([api.get<Paginated<StaffMember>>('/api/v1/users'), api.get<ApiEnvelope<Role[]>>('/api/v1/roles')]); setStaff(users.data.data); setRoles(roleData.data.data) } catch (err) { setError(errorMessage(err)) } }
+  const load = async () => {
+    try {
+      const [users, roleData, outletData] = await Promise.all([
+        api.get<Paginated<StaffMember>>('/api/v1/users'),
+        api.get<ApiEnvelope<Role[]>>('/api/v1/roles'),
+        api.get<ApiEnvelope<Outlet[]>>('/api/v1/outlets'),
+      ])
+      setStaff(users.data.data)
+      setRoles(roleData.data.data)
+      setOutlets(outletData.data.data)
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
   useEffect(() => { const task = window.setTimeout(() => { void load() }, 0); return () => window.clearTimeout(task) }, [])
-  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget; const values = new FormData(form); const outletIds = values.getAll('outlet_ids').map(Number); if (!outletIds.length) { setError('Select at least one outlet for this staff member.'); return } const data = { name: String(values.get('name')), email: String(values.get('email')), password: String(values.get('password')), role_id: Number(values.get('role_id')), outlet_ids: outletIds }; setError(''); try { await api.post('/api/v1/users', data); form.reset(); setAdding(false); setMessage('Staff access created.'); await load() } catch (err) { setError(errorMessage(err)) } }
-  return <><Header eyebrow="SETTINGS" title="Staff access" text="Invite your team and assign only the outlets they work in." action={mayManageStaff ? <button className="button button-primary" onClick={() => setAdding(!adding)}><UserPlus size={17} />Add staff</button> : undefined} />{adding && mayManageStaff && <form className="settings-card compact-form" onSubmit={submit}><div className="form-grid"><Input label="Full name" name="name" required /><Input label="Email" name="email" type="email" required /><Input label="Temporary password" name="password" type="password" required minLength={8} /><label className="field"><span>Role</span><select name="role_id" required defaultValue=""><option value="" disabled>Select a role</option>{roles.map((role) => <option value={role.id} key={role.id}>{role.name}</option>)}</select></label></div><fieldset className="outlet-assignment"><legend>Outlet access</legend><p>Select every outlet this person may open and receive realtime updates for.</p><div>{session?.outlets.map((outlet) => <label key={outlet.id}><input type="checkbox" name="outlet_ids" value={outlet.id} defaultChecked={session.outlets.length === 1} /><span>{outlet.name}</span></label>)}</div></fieldset><button className="button button-primary">Create staff access</button></form>}<Notice error={error} success={message} /><section className="data-card"><div className="data-card-heading"><Users size={19} /><h2>Team members</h2><span>{staff.length} total</span></div><div className="data-list">{staff.map((member) => <div className="data-row" key={member.id}><span className="member-avatar">{member.name.slice(0, 1)}</span><div><strong>{member.name}</strong><small>{member.email}</small></div><span className="role-pill">{member.membership.role?.name ?? 'No role'}</span><small>{member.membership.outlet_ids?.length ?? 0} outlet{member.membership.outlet_ids?.length === 1 ? '' : 's'}</small><span className={`status-badge ${member.membership.is_active ? 'status-green' : 'status-red'}`}>{member.membership.is_active ? 'Active' : 'Inactive'}</span></div>)}{!staff.length && <Empty text="No staff members found." />}</div></section></>
+  function closeForm() { setAdding(false); setEditing(null) }
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const values = new FormData(event.currentTarget)
+    const outletIds = values.getAll('outlet_ids').map(Number)
+    if (!outletIds.length) { setError('Select at least one outlet for this staff member.'); return }
+    const salaryRaw = String(values.get('salary_amount') ?? '').trim()
+    const payCycle = String(values.get('pay_cycle') ?? '')
+    if (salaryRaw && !payCycle) { setError('Select a pay cycle for salary.'); return }
+    const password = String(values.get('password') ?? '')
+    const data = {
+      name: String(values.get('name')),
+      role_id: Number(values.get('role_id')),
+      is_active: values.has('is_active'),
+      outlet_ids: outletIds,
+      salary_amount: salaryRaw ? Number(salaryRaw) : null,
+      pay_cycle: salaryRaw ? payCycle : null,
+      ...(password ? { password } : {}),
+      ...(!editing ? { email: String(values.get('email')) } : {}),
+    }
+    setError('')
+    try {
+      if (editing) await api.put(`/api/v1/users/${editing.id}`, data)
+      else await api.post('/api/v1/users', data)
+      const wasEditing = Boolean(editing)
+      closeForm()
+      setMessage(wasEditing ? 'Staff access updated.' : 'Staff access created.')
+      await load()
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+  const formOpen = adding || editing !== null
+  const outletChoices = outlets.length ? outlets : (session?.outlets ?? [])
+  return <>
+    <Header eyebrow="SETTINGS" title="Staff access" text="Invite your team, pay them on a cycle, and assign a second Owner when you need another full admin." action={mayManageStaff ? <button className="button button-primary" type="button" onClick={() => { setEditing(null); setAdding(true); setMessage('') }}><UserPlus size={17} />Add staff</button> : undefined} />
+    <Modal open={formOpen && mayManageStaff} title={editing ? `Edit ${editing.name}` : 'Add staff'} description={editing ? 'Update role, outlets, salary, or reset their password.' : 'Owner is full admin for this hotel. Salary is optional and only used on the Money tab.'} onClose={closeForm}>
+      <form key={editing?.id ?? 'new'} className="compact-form" onSubmit={submit}>
+        <div className="form-grid">
+          <Input label="Full name" name="name" required defaultValue={editing?.name ?? ''} />
+          {!editing && <Input label="Email" name="email" type="email" required />}
+          <Input label={editing ? 'New password (optional)' : 'Temporary password'} name="password" type="password" required={!editing} minLength={8} />
+          <label className="field"><span>Role</span><select name="role_id" required defaultValue={editing?.membership.role?.id ?? ''}><option value="" disabled>Select a role</option>{roles.map((role) => <option value={role.id} key={role.id}>{roleLabel(role)}</option>)}</select></label>
+          <Input label="Salary amount (optional)" name="salary_amount" type="number" min="0" step="0.01" defaultValue={editing?.membership.salary_amount ?? ''} />
+          <label className="field"><span>Pay cycle</span><select name="pay_cycle" defaultValue={editing?.membership.pay_cycle ?? ''}><option value="">No auto salary</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
+          <label className="check-row field-wide"><input type="checkbox" name="is_active" value="1" defaultChecked={editing?.membership.is_active ?? true} />Active in this hotel</label>
+        </div>
+        <fieldset className="outlet-assignment"><legend>Outlet access</legend><p>Select every outlet this person may open and receive realtime updates for.</p><div>{outletChoices.map((outlet) => <label key={outlet.id}><input type="checkbox" name="outlet_ids" value={outlet.id} defaultChecked={editing ? editing.membership.outlet_ids?.includes(outlet.id) : outletChoices.length === 1} /><span>{outlet.name}</span></label>)}</div></fieldset>
+        <div className="form-action-row">
+          <button className="button button-primary" type="submit">{editing ? 'Save staff' : 'Create staff access'}</button>
+          <button className="button button-secondary" type="button" onClick={closeForm}>Close</button>
+        </div>
+      </form>
+    </Modal>
+    <Notice error={error} success={message} />
+    <section className="data-card">
+      <div className="data-card-heading"><Users size={19} /><h2>Team members</h2><span>{staff.length} total</span></div>
+      <div className="data-list">{staff.map((member) => <div className="data-row" key={member.id}><span className="member-avatar">{member.name.slice(0, 1)}</span><div><strong>{member.name}</strong><small>{member.email}{member.membership.salary_amount ? ` · ${member.membership.salary_amount} ${payLabel(member.membership.pay_cycle)}` : ''}</small></div><span className={member.membership.role?.is_owner ? 'owner-badge' : 'role-pill'}>{member.membership.role?.is_owner ? 'Owner / full admin' : (member.membership.role?.name ?? 'No role')}</span><small>{member.membership.outlet_ids?.length ?? 0} outlet{member.membership.outlet_ids?.length === 1 ? '' : 's'}</small><span className={`status-badge ${member.membership.is_active ? 'status-green' : 'status-red'}`}>{member.membership.is_active ? 'Active' : 'Inactive'}</span>{mayManageStaff && <button className="row-action" type="button" title={`Edit ${member.name}`} onClick={() => { setAdding(false); setEditing(member); setMessage(''); setError('') }}><Pencil size={16} /></button>}</div>)}{!staff.length && <Empty text="No staff members found." />}</div>
+    </section>
+  </>
 }
 
 export function RolesPage() {

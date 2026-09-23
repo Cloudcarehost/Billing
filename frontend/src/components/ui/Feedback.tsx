@@ -17,6 +17,8 @@ export function Modal({ open, title, description, children, onClose }: { open: b
   const descriptionId = useId()
   const dialogRef = useRef<HTMLElement>(null)
   const lastFocus = useRef<HTMLElement | null>(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
   useEffect(() => {
     if (!open) return
@@ -31,7 +33,7 @@ export function Modal({ open, title, description, children, onClose }: { open: b
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        onClose()
+        onCloseRef.current()
         return
       }
       if (event.key !== 'Tab') return
@@ -54,7 +56,7 @@ export function Modal({ open, title, description, children, onClose }: { open: b
       document.body.style.overflow = previousOverflow
       lastFocus.current?.focus()
     }
-  }, [open, onClose])
+  }, [open])
 
   if (!open) return null
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>

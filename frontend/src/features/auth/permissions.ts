@@ -23,7 +23,7 @@ export function firstAccessiblePath(session: Session | null): string {
   const paths: Array<[string, string]> = [
     ['dashboard.view', '/app'], ['tables.view', '/app/tables'], ['orders.create', '/app/orders'],
     ['kitchen.view', '/app/kitchen'], ['billing.view', '/app/billing'], ['catalog.view', '/app/menu'], ['inventory.view', '/app/inventory'],
-    ['reports.view', '/app/reports'], ['customers.view', '/app/customers'], ['settings.manage', '/app/settings/hotel'],
+    ['reports.view', '/app/reports'], ['finance.view', '/app/money'], ['customers.view', '/app/customers'], ['settings.manage', '/app/settings/hotel'],
     ['users.view', '/app/settings/staff'],
   ]
 

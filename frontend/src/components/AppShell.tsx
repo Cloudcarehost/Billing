@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { Bell, BookOpen, ChefHat, ClipboardList, LayoutDashboard, LogOut, Menu, Moon, Package, QrCode, Search, Settings, Store, Users, UtensilsCrossed, Wifi, WifiOff, X } from 'lucide-react'
+import { Bell, BookOpen, ChefHat, ClipboardList, LayoutDashboard, LogOut, Menu, Moon, Package, QrCode, Search, Settings, Store, Users, UtensilsCrossed, Wallet, Wifi, WifiOff, X } from 'lucide-react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../features/auth/AuthContext'
 import { can, canAny, firstAccessiblePath, isOwner } from '../features/auth/permissions'
@@ -12,7 +12,7 @@ import { unwrap, useOperationalRefresh } from '../pages/opsShared'
 import type { ApiEnvelope, DiningTable } from '../types/api'
 
 const navigation = [
-  ['Dashboard', '/app', LayoutDashboard, 'dashboard.view'], ['Tables', '/app/tables', UtensilsCrossed, 'tables.view'], ['Orders', '/app/orders', ClipboardList, 'orders.create'], ['Kitchen display', '/app/kitchen', ChefHat, 'kitchen.view'], ['Billing', '/app/billing', BookOpen, 'billing.view'], ['Menu', '/app/menu', ChefHat, 'catalog.view'], ['Inventory', '/app/inventory', Package, 'inventory.view'], ['Reports', '/app/reports', LayoutDashboard, 'reports.view'], ['Customers', '/app/customers', Users, 'customers.view'],
+  ['Dashboard', '/app', LayoutDashboard, 'dashboard.view'], ['Tables', '/app/tables', UtensilsCrossed, 'tables.view'], ['Orders', '/app/orders', ClipboardList, 'orders.create'], ['Kitchen display', '/app/kitchen', ChefHat, 'kitchen.view'], ['Billing', '/app/billing', BookOpen, 'billing.view'], ['Menu', '/app/menu', ChefHat, 'catalog.view'], ['Inventory', '/app/inventory', Package, 'inventory.view'], ['Reports', '/app/reports', LayoutDashboard, 'reports.view'], ['Money', '/app/money', Wallet, 'finance.view'], ['Customers', '/app/customers', Users, 'customers.view'],
 ] as const
 
 function LiveClock({ timezone, businessDate }: { timezone: string; businessDate?: string | null }) {
