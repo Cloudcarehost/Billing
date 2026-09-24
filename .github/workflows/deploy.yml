@@ -42,7 +42,18 @@ jobs:
           script: |
             set -euo pipefail
             cd "${{ secrets.PRODUCTION_PATH }}"
-            git config --global --add safe.directory "$(pwd)"
+            APP_DIR="$(pwd)"
+            ME="$(whoami)"
+            OWNER="$(stat -c '%U' "$APP_DIR")"
+            git config --global --add safe.directory "$APP_DIR"
+            if [ ! -w "$APP_DIR/.git" ]; then
+              echo "Git metadata is not writable by $ME (owner is $OWNER). Repairing..."
+              if ! sudo -n chown -R "$ME:$ME" "$APP_DIR"; then
+                echo "Could not chown $APP_DIR. SSH in as admin and run:"
+                echo "  sudo chown -R $ME:$ME $APP_DIR"
+                exit 1
+              fi
+            fi
             git fetch origin main
             git reset --hard origin/main
             bash deploy/release.sh

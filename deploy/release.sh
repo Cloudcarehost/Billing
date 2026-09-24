@@ -18,6 +18,10 @@ if grep -q '^APP_ENV=local' "$BACKEND/.env"; then
 fi
 
 git config --global --add safe.directory "$ROOT"
+if [[ ! -w "$ROOT/.git" ]]; then
+  echo "Git metadata is not writable by $(whoami). Run: sudo chown -R $(whoami):$(whoami) $ROOT"
+  exit 1
+fi
 git fetch origin main
 git reset --hard origin/main
 
