@@ -1,29 +1,25 @@
-name: Deploy
+name: Deploy Billing App
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
-
-concurrency:
-  group: production-deploy
-  cancel-in-progress: false
+    branches:
+      - main
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Pull and release on the server
-        uses: appleboy/ssh-action@v1.2.0
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up SSH and Deploy
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PRODUCTION_HOST }}
           username: ${{ secrets.PRODUCTION_USER }}
           key: ${{ secrets.PRODUCTION_SSH_KEY }}
-          script_stop: true
+          port: ${{ secrets.PRODUCTION_PORT:-22 }}
           script: |
-            set -euo pipefail
-            cd "${{ secrets.PRODUCTION_PATH }}"
-            git fetch origin main
-            git reset --hard origin/main
+            cd ${{ secrets.PRODUCTION_PATH }}
             bash deploy/release.sh
