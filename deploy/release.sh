@@ -17,6 +17,7 @@ if grep -q '^APP_ENV=local' "$BACKEND/.env"; then
   exit 1
 fi
 
+git config --global --add safe.directory "$ROOT"
 git fetch origin main
 git reset --hard origin/main
 
