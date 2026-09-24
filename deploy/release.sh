@@ -1,44 +1,38 @@
-#!/usr/bin/env bash
-# Run on EVERY release (pipeline or git pull). Does not start queue/reverb.
-# Those stay running under Supervisor from setup-once.sh.
-set -euo pipefail
+#!/bin/bash
+set -e
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BACKEND="$ROOT/backend"
-FRONTEND="$ROOT/frontend"
+APP_DIR="/home/nikhil/web/billing.nikhilbhangale.com/public_html"
+cd "$APP_DIR"
 
-if [[ ! -f "$BACKEND/.env" ]]; then
-  echo "Missing $BACKEND/.env — copy .env.example and set production values first."
-  exit 1
+echo "Starting deployment for billing application..."
+
+if grep -q "APP_ENV=local" backend/.env; then
+    echo "Error: backend/.env still has APP_ENV=local. Aborting release for safety."
+    exit 1
 fi
 
-cd "$BACKEND"
+git fetch origin main
+git reset --hard origin/main
 
-if grep -q '^APP_ENV=local' .env 2>/dev/null; then
-  echo "APP_ENV is still local. Set APP_ENV=production before a live release."
-  exit 1
-fi
-
-composer install --no-dev --optimize-autoloader --no-interaction
+cd backend
+composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
 php artisan migrate --force
-php artisan config:cache
+
+php artisan cache:clear
+php artisan route:clear
+php artisan config:clear
+php artisan view:clear
 php artisan route:cache
-php artisan event:cache
+php artisan config:cache
 php artisan view:cache
 php artisan queue:restart
+cd ..
 
-cd "$FRONTEND"
-if [[ ! -f .env.production ]]; then
-  echo "Missing $FRONTEND/.env.production — copy .env.production.example first."
-  exit 1
-fi
+cd frontend
 npm ci
 npm run build
+cd ..
 
-if command -v supervisorctl >/dev/null 2>&1; then
-  sudo supervisorctl restart aswad-reverb
-else
-  echo "supervisorctl not found. Restart Reverb yourself: php artisan reverb:start is already handled by Supervisor."
-fi
+sudo supervisorctl restart billing-reverb
 
-echo "Release finished. Queue workers will recycle via queue:restart; Reverb was restarted."
+echo "Deployment finished successfully!"
