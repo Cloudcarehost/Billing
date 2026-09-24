@@ -13,7 +13,23 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Require deploy secrets
+        env:
+          HOST: ${{ secrets.PRODUCTION_HOST }}
+          USER: ${{ secrets.PRODUCTION_USER }}
+          KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          PATH_NAME: ${{ secrets.PRODUCTION_PATH }}
+        run: |
+          missing=""
+          [ -z "$HOST" ] && missing="$missing PRODUCTION_HOST"
+          [ -z "$USER" ] && missing="$missing PRODUCTION_USER"
+          [ -z "$KEY" ] && missing="$missing PRODUCTION_SSH_KEY"
+          [ -z "$PATH_NAME" ] && missing="$missing PRODUCTION_PATH"
+          if [ -n "$missing" ]; then
+            echo "::error::Add these GitHub Actions secrets before Deploy can SSH to Hestia:$missing"
+            exit 1
+          fi
+      - uses: actions/checkout@v5
       - name: Pull and release on the server
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -21,6 +37,7 @@ jobs:
           username: ${{ secrets.PRODUCTION_USER }}
           key: ${{ secrets.PRODUCTION_SSH_KEY }}
           port: 22
+          command_timeout: 20m
           script_stop: true
           script: |
             set -euo pipefail

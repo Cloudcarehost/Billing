@@ -80,7 +80,7 @@ export function BillingPage() {
     if (event.type === 'invoice_created' && event.session_id === selectedBillingSessionId && typeof event.data?.invoice_id === 'number') {
       void loadInvoice(event.data.invoice_id)
     }
-    if (event.type === 'invoice_reopened' && event.session_id === selectedBillingSessionId) {
+    if (event.type === 'invoice_reopened' && selectedBillingSessionId && event.session_id === selectedBillingSessionId) {
       setInvoice(null)
       void loadSelected(selectedBillingSessionId)
     }

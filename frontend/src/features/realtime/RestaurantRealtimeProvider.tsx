@@ -55,7 +55,7 @@ export function RestaurantRealtimeProvider({ children }: { children: ReactNode }
     const host = import.meta.env.VITE_REVERB_HOST ?? (window.location.hostname === '127.0.0.1' ? '127.0.0.1' : 'localhost')
     const port = Number(import.meta.env.VITE_REVERB_PORT ?? 8080)
     const scheme = import.meta.env.VITE_REVERB_SCHEME ?? 'http'
-    ;(window as Window & { Pusher: typeof Pusher }).Pusher = Pusher
+    ;(window as unknown as Window & { Pusher: typeof Pusher }).Pusher = Pusher
     const echo = new Echo({
       broadcaster: 'reverb',
       key: import.meta.env.VITE_REVERB_APP_KEY ?? 'aswad-local-key',

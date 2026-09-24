@@ -67,7 +67,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [activeOutletId, canViewBilling, session?.hotel])
   useEffect(() => { seenPendingBills.current = null }, [activeOutletId])
   const { status } = useRestaurantRealtime({
-    outletIds: session.outlets.map((outlet) => outlet.id),
+    outletIds: session?.outlets.map((outlet) => outlet.id) ?? [],
     onUpdate: (event) => {
       if (event.type === 'bill_requested' || event.type === 'table_closed' || event.type === 'invoice_created' || event.type === 'connection_restored') {
         void loadPendingBills()
@@ -75,6 +75,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       if (event.type !== 'outlet_flow_changed' || !event.outlet_id) return
       const flow = event.data?.order_flow
       if (flow !== 'kitchen' && flow !== 'direct_bill') { void refresh(); return }
+      if (!session) { void refresh(); return }
       setSession({ ...session, outlets: session.outlets.map((outlet) => outlet.id === event.outlet_id ? { ...outlet, order_flow: flow } : outlet) })
     },
   })
