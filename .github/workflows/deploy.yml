@@ -20,6 +20,7 @@ jobs:
           host: ${{ secrets.PRODUCTION_HOST }}
           username: ${{ secrets.PRODUCTION_USER }}
           key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          port: 22
           script_stop: true
           script: |
             set -euo pipefail

@@ -30,6 +30,11 @@ git pull
 bash deploy/release.sh
 ```
 
+The GitHub Actions file is **not** in this folder. Edit it here, then push:
+
+- `.github/workflows/deploy.yml` — SSH deploy on each `main` push
+- `.github/workflows/ci.yml` — tests and frontend build
+
 ## GitHub secrets (repo Settings → Secrets)
 
 - `PRODUCTION_HOST` — server IP or hostname
