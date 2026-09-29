@@ -133,6 +133,7 @@ Route::prefix('v1')->group(function (): void {
         Route::post('dining-sessions/{session}/cancel-parcel', [DiningSessionController::class, 'cancelParcel'])->middleware('permission:sessions.open');
         Route::post('dining-sessions/{session}/discount', [DiningSessionController::class, 'discount'])->middleware('permission:billing.discount');
         Route::post('dining-sessions/{session}/invoice', [InvoiceController::class, 'create'])->middleware('permission:billing.create');
+        Route::get('invoices', [InvoiceController::class, 'index'])->middleware('permission:billing.view');
         Route::patch('invoices/{invoice}/guest', [InvoiceController::class, 'guest'])->middleware('permission:billing.create');
         Route::get('invoices/{invoice}', [InvoiceController::class, 'show'])->middleware('permission:billing.view');
         Route::post('invoices/{invoice}/payments', [InvoiceController::class, 'payment'])->middleware(['permission:payments.manage', 'idempotent:payment']);

@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\InvoiceStatus;
 use App\Enums\PaymentMethod;
+use App\Enums\PaymentStatus;
+use App\Enums\PaymentType;
 use App\Models\Customer;
 use App\Models\DiningSession;
 use App\Models\Invoice;
@@ -40,6 +43,70 @@ class InvoiceController extends ApiController
         }
 
         return $this->success($service->createInvoice($session, $request->user(), $hotel, $guest), 'Invoice created.', 201);
+    }
+
+    public function index(Request $request): JsonResponse
+    {
+        $hotel = $request->attributes->get('currentHotel');
+        $data = $request->validate([
+            'q' => ['nullable', 'string', 'max:100'],
+            'from' => ['nullable', 'date'],
+            'to' => ['nullable', 'date', 'after_or_equal:from'],
+            'status' => ['nullable', Rule::enum(InvoiceStatus::class)],
+            'payment_status' => ['nullable', Rule::enum(PaymentStatus::class)],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+        $from = $data['from'] ?? null;
+        $to = $data['to'] ?? ($from ?: null);
+        $search = trim((string) ($data['q'] ?? ''));
+
+        $invoices = Invoice::query()
+            ->where('hotel_id', $hotel->id)
+            ->when($request->attributes->get('currentOutletId'), fn ($query, $id) => $query->where('outlet_id', $id))
+            ->when($from, fn ($query) => $query->whereDate('business_date', '>=', $from))
+            ->when($to, fn ($query) => $query->whereDate('business_date', '<=', $to))
+            ->when($data['status'] ?? null, fn ($query, $status) => $query->where('status', $status))
+            ->when($data['payment_status'] ?? null, fn ($query, $status) => $query->where('payment_status', $status))
+            ->when($search !== '', function ($query) use ($search) {
+                $term = '%'.str_replace(['%', '_'], ['\\%', '\\_'], $search).'%';
+                $query->where(function ($inner) use ($term) {
+                    $inner->where('invoice_number', 'like', $term)
+                        ->orWhere('customer_name', 'like', $term)
+                        ->orWhere('customer_phone', 'like', $term)
+                        ->orWhereHas('diningSession.diningTable', function ($table) use ($term) {
+                            $table->where('name', 'like', $term)->orWhere('code', 'like', $term);
+                        });
+                });
+            })
+            ->with([
+                'outlet:id,name,code',
+                'customer:id,name,phone',
+                'chargedTo:id,name',
+                'creator:id,name',
+                'diningSession.diningTable:id,name,code,service_type',
+                'payments:id,invoice_id,method,type,amount',
+            ])
+            ->orderByDesc('billed_at')
+            ->orderByDesc('id')
+            ->paginate(min((int) ($data['per_page'] ?? 20), 50));
+
+        $invoices->getCollection()->transform(function (Invoice $invoice) {
+            $methods = $invoice->payments
+                ->where('type', '!=', PaymentType::Refund->value)
+                ->pluck('method')
+                ->unique()
+                ->values()
+                ->all();
+            $invoice->setAttribute('table_name', $invoice->diningSession?->diningTable?->name);
+            $invoice->setAttribute('service_type', $invoice->diningSession?->diningTable?->service_type ?? 'dine_in');
+            $invoice->setAttribute('payment_methods', $methods);
+            $invoice->unsetRelation('payments');
+
+            return $invoice;
+        });
+
+        return $this->paginated($invoices);
     }
 
     public function show(Request $request, int $invoice): JsonResponse

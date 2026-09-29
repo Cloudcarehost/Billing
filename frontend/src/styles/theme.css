@@ -249,3 +249,21 @@ button, input, select, textarea { font: inherit; } button { cursor: pointer; } a
 .internal-bill-section { padding-top: 12px; border-top: 1px solid var(--color-line); }
 .bill-empty-lines { margin: 8px 0; color: var(--color-muted); font-size: 13px; }
 .joined-table-badge { display: inline-flex; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: #e8f1ff; color: #2457c5; font-size: 11px; font-weight: 700; }
+
+.discount-row.guest-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.previous-bills-filters { align-items: end; }
+.previous-bills-search { margin: 0; min-width: min(100%, 280px); flex: 1; }
+.previous-bills-page .data-table { overflow-x: auto; }
+.previous-bills-chips { margin: 0 0 12px; }
+.previous-bills-table tr { cursor: pointer; }
+.previous-bills-table tr:hover { background: #f7fbf8; }
+.previous-bills-table .button { min-height: 32px; padding: 0 10px; }
+.bill-due-row { background: #fffaf3; }
+.bill-voided-row { color: var(--color-muted); }
+.status-badge.status-amber { color: #996300; background: var(--color-amber-soft); }
+.previous-bill-panel { min-height: 540px; }
+@media (max-width: 760px) {
+  .previous-bills-filters { display: grid; }
+  .previous-bills-search { max-width: none; }
+  .previous-bills-table .button { width: 100%; }
+}

@@ -13,6 +13,7 @@ import { RestaurantRealtimeProvider } from './features/realtime/RestaurantRealti
 const MenuPage = lazy(() => import('./pages/MenuPage').then((module) => ({ default: module.MenuPage })))
 const KitchenPage = lazy(() => import('./pages/KitchenPage').then((module) => ({ default: module.KitchenPage })))
 const BillingPage = lazy(() => import('./pages/BillingPage').then((module) => ({ default: module.BillingPage })))
+const PreviousBillsPage = lazy(() => import('./pages/PreviousBillsPage').then((module) => ({ default: module.PreviousBillsPage })))
 const InventoryPage = lazy(() => import('./pages/PhaseThreePages').then((module) => ({ default: module.InventoryPage })))
 const LiveDashboardPage = lazy(() => import('./pages/PhaseThreePages').then((module) => ({ default: module.LiveDashboardPage })))
 const ReportsPage = lazy(() => import('./pages/PhaseThreePages').then((module) => ({ default: module.ReportsPage })))
@@ -53,6 +54,8 @@ function ProtectedApp() {
     <Route path="tables" element={<PermissionRoute permission="tables.view"><TablesPage /></PermissionRoute>} />
     <Route path="orders" element={<PermissionRoute permission="orders.create"><OrdersPage /></PermissionRoute>} />
     <Route path="kitchen" element={<LazyRoute><PermissionRoute permission="kitchen.view"><KitchenPage /></PermissionRoute></LazyRoute>} />
+    <Route path="billing/history/:invoiceId" element={<LazyRoute><PermissionRoute permission="billing.view"><PreviousBillsPage /></PermissionRoute></LazyRoute>} />
+    <Route path="billing/history" element={<LazyRoute><PermissionRoute permission="billing.view"><PreviousBillsPage /></PermissionRoute></LazyRoute>} />
     <Route path="billing" element={<LazyRoute><PermissionRoute permission="billing.view"><BillingPage /></PermissionRoute></LazyRoute>} />
     <Route path="menu" element={<LazyRoute><PermissionRoute permission="catalog.view"><MenuPage /></PermissionRoute></LazyRoute>} />
     <Route path="inventory" element={<LazyRoute><PermissionRoute permission="inventory.view"><InventoryPage /></PermissionRoute></LazyRoute>} />
