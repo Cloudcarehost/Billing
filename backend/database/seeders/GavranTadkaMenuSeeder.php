@@ -15,6 +15,8 @@ class GavranTadkaMenuSeeder extends Seeder
     {
         $hotel = Hotel::query()->first();
         if (! $hotel) {
+            $this->command?->warn('No hotel found. Complete /setup first, then seed the menu.');
+
             return;
         }
 

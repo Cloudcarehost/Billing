@@ -72,6 +72,7 @@ class HistoricalDataTest extends TestCase
             'hsn_code' => '2106',
             'serving_size' => '250 g',
             'tax_type' => TaxType::Exclusive->value,
+            'print_on_bill' => true,
             'unit_price' => '180.00',
             'unit_cost' => '70.00',
         ]);

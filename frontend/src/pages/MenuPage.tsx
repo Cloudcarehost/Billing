@@ -34,7 +34,7 @@ export function MenuPage() {
     event.preventDefault()
     const form = event.currentTarget
     const values = new FormData(form)
-    const data = { name: String(values.get('name')), is_active: values.has('is_active') }
+    const data = { name: String(values.get('name')), is_active: values.has('is_active'), print_on_bill: values.has('print_on_bill') }
     setError('')
     try {
       if (editingCategory) await api.put(`/api/v1/categories/${editingCategory.id}`, data)
@@ -97,10 +97,11 @@ export function MenuPage() {
     </form>}
     {panel === 'category' && <section className="catalog-manage">
       <form key={editingCategory?.id ?? 'new-category'} className="settings-card compact-form" onSubmit={saveCategory}>
-        <div className="role-form-heading"><div><h2>{editingCategory ? `Edit ${editingCategory.name}` : 'Add category'}</h2><p>Rename, hide or add groups used on the order screen.</p></div><button type="button" className="button button-secondary" onClick={() => { setPanel(null); setEditingCategory(null) }}>Close</button></div>
+        <div className="role-form-heading"><div><h2>{editingCategory ? `Edit ${editingCategory.name}` : 'Add category'}</h2><p>Rename, hide or add groups used on the order screen. Internal categories stay in billing, totals, and reports but are left off the customer printed bill.</p></div><button type="button" className="button button-secondary" onClick={() => { setPanel(null); setEditingCategory(null) }}>Close</button></div>
         <div className="form-grid">
           <Field label="Category name" name="name" required defaultValue={editingCategory?.name ?? ''} />
           <label className="check-row field-wide"><input type="checkbox" name="is_active" value="1" defaultChecked={editingCategory?.is_active ?? true} />Active category</label>
+          <label className="check-row field-wide"><input type="checkbox" name="print_on_bill" value="1" defaultChecked={editingCategory?.print_on_bill ?? true} />Show on customer printed bill</label>
         </div>
         <div className="form-action-row">
           <button className="button button-primary" type="submit">{editingCategory ? 'Save category' : 'Add category'}</button>
@@ -109,7 +110,7 @@ export function MenuPage() {
       </form>
       <section className="data-card">
         <div className="data-card-heading"><UtensilsCrossed size={19} /><h2>Categories</h2><span>{categories.length} total</span></div>
-        <div className="data-list">{categories.map((category) => <div className="data-row" key={category.id}><div><strong>{category.name}</strong><small>{products.filter((product) => product.category_id === category.id).length} products</small></div><span className={`status-badge ${category.is_active ? 'status-green' : 'status-red'}`}>{category.is_active ? 'Active' : 'Inactive'}</span><span className="row-actions"><button className="row-action" type="button" title={`Edit ${category.name}`} onClick={() => { setEditingCategory(category); setError(''); setSuccess('') }}><Pencil size={16} /></button><button className="row-action danger" type="button" title={`Delete ${category.name}`} onClick={() => setDeleting({ kind: 'category', id: category.id, name: category.name })}><Trash2 size={16} /></button></span></div>)}{!categories.length && <p className="empty-row">No categories yet.</p>}</div>
+        <div className="data-list">{categories.map((category) => <div className="data-row" key={category.id}><div><strong>{category.name}</strong><small>{products.filter((product) => product.category_id === category.id).length} products{category.print_on_bill === false ? ' · Internal (not on printed bill)' : ''}</small></div><span className={`status-badge ${category.is_active ? 'status-green' : 'status-red'}`}>{category.is_active ? 'Active' : 'Inactive'}</span><span className="row-actions"><button className="row-action" type="button" title={`Edit ${category.name}`} onClick={() => { setEditingCategory(category); setError(''); setSuccess('') }}><Pencil size={16} /></button><button className="row-action danger" type="button" title={`Delete ${category.name}`} onClick={() => setDeleting({ kind: 'category', id: category.id, name: category.name })}><Trash2 size={16} /></button></span></div>)}{!categories.length && <p className="empty-row">No categories yet.</p>}</div>
       </section>
     </section>}
     {panel === 'station' && <section className="catalog-manage">

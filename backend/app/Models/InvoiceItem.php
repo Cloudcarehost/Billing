@@ -12,14 +12,19 @@ class InvoiceItem extends Model
     use HasFactory;
 
     protected $fillable = [
-        'invoice_id', 'product_id', 'order_item_id', 'item_name', 'category_name', 'sku', 'hsn_code', 'unit', 'serving_size', 'quantity',
+        'invoice_id', 'product_id', 'order_item_id', 'item_name', 'category_name', 'print_on_bill', 'sku', 'hsn_code', 'unit', 'serving_size', 'quantity',
         'unit_price', 'unit_cost', 'discount_amount', 'tax_rate', 'tax_type', 'tax_amount',
         'line_subtotal', 'line_total', 'cgst_amount', 'sgst_amount', 'igst_amount',
+    ];
+
+    protected $attributes = [
+        'print_on_bill' => true,
     ];
 
     protected function casts(): array
     {
         return [
+            'print_on_bill' => 'boolean',
             'quantity' => 'decimal:3', 'unit_price' => 'decimal:2',
             'unit_cost' => 'decimal:2', 'discount_amount' => 'decimal:2',
             'tax_rate' => 'decimal:4', 'tax_amount' => 'decimal:2',

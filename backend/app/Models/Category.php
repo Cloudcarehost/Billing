@@ -11,11 +11,16 @@ class Category extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['hotel_id', 'name', 'slug', 'is_active', 'sort_order'];
+    protected $fillable = ['hotel_id', 'name', 'slug', 'is_active', 'print_on_bill', 'sort_order'];
+
+    protected $attributes = [
+        'is_active' => true,
+        'print_on_bill' => true,
+    ];
 
     protected function casts(): array
     {
-        return ['is_active' => 'boolean', 'sort_order' => 'integer'];
+        return ['is_active' => 'boolean', 'print_on_bill' => 'boolean', 'sort_order' => 'integer'];
     }
 
     public function hotel(): BelongsTo

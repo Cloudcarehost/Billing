@@ -50,6 +50,7 @@ class CategoryController extends ApiController
             'name' => [$category ? 'sometimes' : 'required', 'string', 'max:255'],
             'slug' => ['sometimes', 'string', 'max:255', 'alpha_dash'],
             'is_active' => ['sometimes', 'boolean'],
+            'print_on_bill' => ['sometimes', 'boolean'],
             'sort_order' => ['sometimes', 'integer', 'min:0'],
         ]);
         if (isset($data['name']) && ! isset($data['slug'])) {

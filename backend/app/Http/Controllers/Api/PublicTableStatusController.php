@@ -18,6 +18,10 @@ class PublicTableStatusController extends ApiController
         $session = $table->activeSession;
         $updatedAt = collect([$table->updated_at, $session?->updated_at, $link->updated_at, $table->waiter_called_at]);
 
+        $visibleItems = $session
+            ? $session->orders->flatMap(fn ($order) => $order->items)->filter(fn ($item) => $item->product?->category?->print_on_bill !== false)->values()
+            : collect();
+
         if ($session) {
             foreach ($session->orders as $order) {
                 $updatedAt->push($order->updated_at);
@@ -34,15 +38,15 @@ class PublicTableStatusController extends ApiController
             'currency' => $table->outlet->hotel->currency_code,
             'waiter_called' => $table->waiter_called_at !== null,
             'active_order' => $session ? [
-                'items' => $session->orders->flatMap(fn ($order) => $order->items)->map(fn ($item) => [
+                'items' => $visibleItems->map(fn ($item) => [
                     'name' => $item->item_name,
                     'quantity' => $item->quantity,
                     'status' => $item->status,
                     'fulfillment_mode' => $item->fulfillment_mode,
                 ])->values(),
-                'subtotal' => $session->subtotal,
-                'tax' => $session->tax_amount,
-                'total' => $session->total_amount,
+                'subtotal' => $this->money($visibleItems->sum(fn ($item) => (float) $item->line_subtotal)),
+                'tax' => $this->money($visibleItems->sum(fn ($item) => (float) $item->tax_amount)),
+                'total' => $this->money($visibleItems->sum(fn ($item) => (float) $item->line_total)),
                 'bill_requested' => $session->status === 'pending_bill',
             ] : null,
             'order_flow' => $table->outlet->order_flow,
@@ -90,6 +94,12 @@ class PublicTableStatusController extends ApiController
             ->with([
                 'diningTable.outlet.hotel:id,name,currency_code',
                 'diningTable.activeSession.orders.items' => fn ($query) => $query->where('status', '!=', 'cancelled')->orderBy('id'),
+                'diningTable.activeSession.orders.items.product.category:id,print_on_bill',
             ])->firstOrFail();
+    }
+
+    private function money(float $amount): string
+    {
+        return number_format($amount, 2, '.', '');
     }
 }

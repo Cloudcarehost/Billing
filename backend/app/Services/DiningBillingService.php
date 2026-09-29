@@ -266,6 +266,7 @@ class DiningBillingService
                     'order_item_id' => $item->id,
                     'item_name' => $item->item_name,
                     'category_name' => $item->product?->category?->name,
+                    'print_on_bill' => $item->product?->category?->print_on_bill ?? true,
                     'sku' => $item->sku,
                     'hsn_code' => $item->product?->hsn_code,
                     'unit' => $item->unit,

@@ -70,7 +70,7 @@ class ProductController extends ApiController
         $hotel = $request->attributes->get('currentHotel');
         $term = trim((string) $request->query('q', ''));
 
-        return Product::query()->where('hotel_id', $hotel->id)->with('category:id,name', 'kitchenStation:id,name,outlet_id')
+        return Product::query()->where('hotel_id', $hotel->id)->with('category:id,name,print_on_bill', 'kitchenStation:id,name,outlet_id')
             ->when($request->filled('category_id'), fn ($q) => $q->where('category_id', $request->integer('category_id')))
             ->when($request->has('active'), fn ($q) => $q->where('is_active', $request->boolean('active')))
             ->when($term !== '', fn ($q) => $q->where(fn ($search) => $search->where('name', 'like', "%{$term}%")->orWhere('sku', $term)->orWhere('barcode', $term)))

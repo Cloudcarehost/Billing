@@ -6,6 +6,7 @@ use App\Models\Category;
 use App\Models\DiningTable;
 use App\Models\Hotel;
 use App\Models\Product;
+use App\Models\TablePublicLink;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -111,6 +112,63 @@ class CatalogAndBillingTest extends TestCase
 
         $this->assertDatabaseMissing('categories', ['id' => $category->id]);
         $this->assertNull($product->fresh()->category_id);
+    }
+
+    public function test_internal_category_stays_on_invoices_and_reports_but_is_hidden_from_guests(): void
+    {
+        [$owner, $hotel] = $this->ownerContext();
+        $outlet = $hotel->outlets()->sole();
+        $drinks = Category::query()->create(['hotel_id' => $hotel->id, 'name' => 'Drinks', 'slug' => 'drinks']);
+        $internal = Category::query()->create(['hotel_id' => $hotel->id, 'name' => 'Service charge', 'slug' => 'service-charge', 'print_on_bill' => false]);
+        $this->actingAs($owner, 'web')->putJson("/api/v1/categories/{$internal->id}", [
+            'print_on_bill' => false,
+        ])->assertOk()->assertJsonPath('data.print_on_bill', false);
+
+        $soda = Product::query()->create([
+            'hotel_id' => $hotel->id, 'category_id' => $drinks->id, 'name' => 'Soda',
+            'selling_price' => 40, 'track_inventory' => false,
+        ]);
+        $charge = Product::query()->create([
+            'hotel_id' => $hotel->id, 'category_id' => $internal->id, 'name' => 'Cover charge',
+            'selling_price' => 100, 'track_inventory' => false,
+        ]);
+        $tableId = $this->actingAs($owner, 'web')->postJson('/api/v1/tables', [
+            'outlet_id' => $outlet->id, 'name' => 'Table 8', 'code' => 'T8', 'capacity' => 4,
+        ])->assertCreated()->json('data.id');
+        $token = TablePublicLink::query()->sole()->token_encrypted;
+        $sessionId = $this->actingAs($owner, 'web')->postJson("/api/v1/tables/{$tableId}/sessions")->assertCreated()->json('data.id');
+        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'internal-category-order')->postJson("/api/v1/dining-sessions/{$sessionId}/orders", [
+            'items' => [
+                ['product_id' => $soda->id, 'quantity' => 1],
+                ['product_id' => $charge->id, 'quantity' => 1],
+            ],
+        ])->assertCreated();
+
+        $session = $this->actingAs($owner, 'web')->getJson("/api/v1/dining-sessions/{$sessionId}")
+            ->assertOk()
+            ->assertJsonPath('data.total_amount', '140.00');
+        $this->assertCount(2, collect($session->json('data.orders.0.items')));
+        $this->assertFalse(collect($session->json('data.orders.0.items'))->firstWhere('item_name', 'Cover charge')['product']['category']['print_on_bill']);
+
+        $guestStatus = $this->getJson("/api/v1/public/tables/{$token}/status")
+            ->assertOk()
+            ->assertJsonPath('data.active_order.items.0.name', 'Soda')
+            ->assertJsonPath('data.active_order.total', '40.00');
+        $this->assertCount(1, $guestStatus->json('data.active_order.items'));
+
+        $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/request-bill")->assertOk();
+        $invoice = $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/invoice")
+            ->assertCreated()
+            ->assertJsonPath('data.total_amount', '140.00');
+        $items = collect($invoice->json('data.items'));
+        $this->assertTrue($items->firstWhere('item_name', 'Soda')['print_on_bill']);
+        $this->assertFalse($items->firstWhere('item_name', 'Cover charge')['print_on_bill']);
+
+        $dashboard = $this->actingAs($owner, 'web')->getJson('/api/v1/dashboard?period=today')->assertOk();
+        $this->assertEquals(140, (float) $dashboard->json('data.sales.amount'));
+        $categorySales = collect($dashboard->json('data.category_sales'));
+        $this->assertEquals(100, (float) $categorySales->firstWhere('category', 'Service charge')['sales']);
+        $this->assertEquals(40, (float) $categorySales->firstWhere('category', 'Drinks')['sales']);
     }
 
     public function test_owner_cannot_delete_the_last_outlet(): void

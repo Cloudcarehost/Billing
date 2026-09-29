@@ -120,7 +120,7 @@ class DiningSessionController extends ApiController
 
     private function session(DiningSession $session): DiningSession
     {
-        $session->load('diningTable:id,outlet_id,name,code,capacity,service_type', 'waiter:id,name', 'customer:id,name,phone', 'orders.items.product:id,name,sku', 'invoice.chargedTo:id,name');
+        $session->load('diningTable:id,outlet_id,name,code,capacity,service_type', 'waiter:id,name', 'customer:id,name,phone', 'orders.items.product.category:id,name,print_on_bill', 'invoice.chargedTo:id,name');
         $history = collect([['status' => 'session_opened', 'occurred_at' => $session->opened_at?->toISOString()]])
             ->merge($session->orders->flatMap(function ($order) {
                 $entries = collect([['status' => 'order_sent', 'order_id' => $order->id, 'occurred_at' => $order->sent_at?->toISOString()]]);
