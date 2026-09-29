@@ -15,7 +15,13 @@ class PublicTableStatusController extends ApiController
     {
         $link = $this->activeLink($token);
         $table = $link->diningTable;
-        $session = $table->activeSession;
+        $session = $table->activeSession ?? \App\Models\DiningSession::occupying($table->id);
+        if ($session && ! $session->relationLoaded('orders')) {
+            $session->load([
+                'orders.items' => fn ($query) => $query->where('status', '!=', 'cancelled')->orderBy('id'),
+                'orders.items.product.category:id,print_on_bill',
+            ]);
+        }
         $updatedAt = collect([$table->updated_at, $session?->updated_at, $link->updated_at, $table->waiter_called_at]);
 
         $visibleItems = $session
@@ -68,7 +74,7 @@ class PublicTableStatusController extends ApiController
         $recent = $table->waiter_called_at !== null && $table->waiter_called_at->gt(now()->subSeconds(45));
         if (! $recent) {
             $table->update(['waiter_called_at' => now()]);
-            $session = $table->activeSession;
+            $session = $table->activeSession ?? \App\Models\DiningSession::occupying($table->id);
             RestaurantUpdated::dispatch('waiter_called', $table->outlet->hotel_id, $table->outlet_id, $table->id, $session?->id, null, null, $session?->waiter_id, null, RestaurantRealtime::table($table, $session, [
                 'table_name' => $table->name,
                 'waiter_called' => true,

@@ -112,6 +112,7 @@ class FinanceAndOwnersTest extends TestCase
             'outlet_ids' => [$outlet->id],
             'salary_amount' => 999,
             'pay_cycle' => 'monthly',
+            'salary_due_on' => '2026-09-01',
         ])->assertCreated()->json('data');
 
         $rent = $this->asUser($owner)->postJson('/api/v1/finance/standing-costs', [
@@ -186,6 +187,50 @@ class FinanceAndOwnersTest extends TestCase
 
         $this->assertSame('Plot rent', StandingCost::query()->find($rent['id'])?->name);
         $this->assertFalse((bool) $inactiveStaff['membership']['is_active']);
+    }
+
+    public function test_staff_salary_is_deducted_on_the_chosen_pay_day(): void
+    {
+        [$owner, $hotel] = $this->ownerContext();
+        $outlet = $hotel->outlets()->sole();
+        $waiterRole = Role::query()->where('hotel_id', $hotel->id)->where('slug', 'waiter')->sole();
+
+        $monthly = $this->asUser($owner)->postJson('/api/v1/users', [
+            'name' => 'Ingale Kaka',
+            'email' => 'ingale@example.test',
+            'password' => 'StrongPassword1',
+            'role_id' => $waiterRole->id,
+            'outlet_ids' => [$outlet->id],
+            'salary_amount' => 28000,
+            'pay_cycle' => 'monthly',
+            'salary_due_on' => '2026-09-05',
+        ])->assertCreated();
+        $this->assertSame('2026-09-05', $monthly->json('data.membership.salary_due_on'));
+        DB::table('hotel_user')->where('user_id', $monthly->json('data.id'))->update(['joined_at' => '2026-08-01 00:00:00']);
+
+        $weekly = $this->asUser($owner)->postJson('/api/v1/users', [
+            'name' => 'Baban',
+            'email' => 'baban@example.test',
+            'password' => 'StrongPassword1',
+            'role_id' => $waiterRole->id,
+            'outlet_ids' => [$outlet->id],
+            'salary_amount' => 12000,
+            'pay_cycle' => 'weekly',
+            'salary_due_on' => '2026-09-07',
+        ])->assertCreated();
+        DB::table('hotel_user')->where('user_id', $weekly->json('data.id'))->update(['joined_at' => '2026-08-01 00:00:00']);
+
+        $beforePayday = $this->asUser($owner)->getJson('/api/v1/finance/summary?from=2026-09-01&to=2026-09-04')->assertOk();
+        $beforeNames = collect($beforePayday->json('data.standing'))->pluck('name')->all();
+        $this->assertNotContains('Ingale Kaka salary', $beforeNames);
+        $this->assertNotContains('Baban salary', $beforeNames);
+
+        $week = $this->asUser($owner)->getJson('/api/v1/finance/summary?from=2026-09-01&to=2026-09-07')->assertOk();
+        $lines = collect($week->json('data.standing'));
+        $this->assertEquals(28000, (float) $lines->firstWhere('name', 'Ingale Kaka salary')['amount']);
+        $this->assertEquals(12000, (float) $lines->firstWhere('name', 'Baban salary')['amount']);
+        $this->assertSame(['2026-09-05'], $lines->firstWhere('name', 'Ingale Kaka salary')['due_dates']);
+        $this->assertSame(['2026-09-07'], $lines->firstWhere('name', 'Baban salary')['due_dates']);
     }
 
     public function test_waiters_cannot_open_money_and_managers_can(): void

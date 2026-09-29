@@ -123,11 +123,37 @@ function roleLabel(role: Role) {
   return role.is_owner ? `${role.name} — full admin for this hotel` : role.name
 }
 
-function payLabel(cycle?: string | null) {
+function payLabel(cycle?: string | null, dueOn?: string | null) {
   if (cycle === 'daily') return 'daily'
-  if (cycle === 'weekly') return 'weekly'
-  if (cycle === 'monthly') return 'monthly'
+  if (cycle === 'weekly') {
+    if (!dueOn) return 'weekly'
+    const weekday = new Date(`${dueOn}T12:00:00`).toLocaleDateString('en-IN', { weekday: 'long' })
+    return `weekly · ${weekday}s`
+  }
+  if (cycle === 'monthly') {
+    if (!dueOn) return 'monthly'
+    const day = new Date(`${dueOn}T12:00:00`).getDate()
+    return `monthly · day ${day}`
+  }
   return ''
+}
+
+function salaryDueOnFromForm(cycle: string, values: FormData): string | null {
+  if (cycle === 'weekly') {
+    const weekday = Number(values.get('salary_weekday'))
+    const date = new Date()
+    date.setHours(12, 0, 0, 0)
+    date.setDate(date.getDate() + ((weekday - date.getDay() + 7) % 7))
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  }
+  if (cycle === 'monthly') {
+    const day = Number(values.get('salary_month_day'))
+    const now = new Date()
+    const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+    const use = Math.min(Math.max(day || 1, 1), last)
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(use).padStart(2, '0')}`
+  }
+  return null
 }
 
 export function StaffPage() {
@@ -137,6 +163,7 @@ export function StaffPage() {
   const [outlets, setOutlets] = useState<Outlet[]>([])
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<StaffMember | null>(null)
+  const [payCycle, setPayCycle] = useState('')
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const mayManageStaff = can(session, 'users.manage')
@@ -155,7 +182,8 @@ export function StaffPage() {
     }
   }
   useEffect(() => { const task = window.setTimeout(() => { void load() }, 0); return () => window.clearTimeout(task) }, [])
-  function closeForm() { setAdding(false); setEditing(null) }
+  useEffect(() => { setPayCycle(editing?.membership.pay_cycle ?? '') }, [editing, adding])
+  function closeForm() { setAdding(false); setEditing(null); setPayCycle('') }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const values = new FormData(event.currentTarget)
@@ -164,6 +192,7 @@ export function StaffPage() {
     const salaryRaw = String(values.get('salary_amount') ?? '').trim()
     const payCycle = String(values.get('pay_cycle') ?? '')
     if (salaryRaw && !payCycle) { setError('Select a pay cycle for salary.'); return }
+    if (salaryRaw && (payCycle === 'weekly' || payCycle === 'monthly') && !salaryDueOnFromForm(payCycle, values)) { setError('Select a pay day for this salary.'); return }
     const password = String(values.get('password') ?? '')
     const data = {
       name: String(values.get('name')),
@@ -172,6 +201,7 @@ export function StaffPage() {
       outlet_ids: outletIds,
       salary_amount: salaryRaw ? Number(salaryRaw) : null,
       pay_cycle: salaryRaw ? payCycle : null,
+      salary_due_on: salaryRaw ? salaryDueOnFromForm(payCycle, values) : null,
       ...(password ? { password } : {}),
       ...(!editing ? { email: String(values.get('email')) } : {}),
     }
@@ -199,7 +229,9 @@ export function StaffPage() {
           <Input label={editing ? 'New password (optional)' : 'Temporary password'} name="password" type="password" required={!editing} minLength={8} />
           <label className="field"><span>Role</span><select name="role_id" required defaultValue={editing?.membership.role?.id ?? ''}><option value="" disabled>Select a role</option>{roles.map((role) => <option value={role.id} key={role.id}>{roleLabel(role)}</option>)}</select></label>
           <Input label="Salary amount (optional)" name="salary_amount" type="number" min="0" step="0.01" defaultValue={editing?.membership.salary_amount ?? ''} />
-          <label className="field"><span>Pay cycle</span><select name="pay_cycle" defaultValue={editing?.membership.pay_cycle ?? ''}><option value="">No auto salary</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
+          <label className="field"><span>Pay cycle</span><select name="pay_cycle" value={payCycle} onChange={(event) => setPayCycle(event.target.value)}><option value="">No auto salary</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
+          {payCycle === 'weekly' && <label className="field"><span>Pay on</span><select name="salary_weekday" defaultValue={editing?.membership.salary_due_on ? String(new Date(`${editing.membership.salary_due_on}T12:00:00`).getDay()) : '1'}><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select></label>}
+          {payCycle === 'monthly' && <label className="field"><span>Pay on day</span><select name="salary_month_day" defaultValue={editing?.membership.salary_due_on ? String(new Date(`${editing.membership.salary_due_on}T12:00:00`).getDate()) : '1'}>{Array.from({ length: 31 }, (_, index) => index + 1).map((day) => <option key={day} value={day}>{day}</option>)}</select></label>}
           <label className="check-row field-wide"><input type="checkbox" name="is_active" value="1" defaultChecked={editing?.membership.is_active ?? true} />Active in this hotel</label>
         </div>
         <fieldset className="outlet-assignment"><legend>Outlet access</legend><p>Select every outlet this person may open and receive realtime updates for.</p><div>{outletChoices.map((outlet) => <label key={outlet.id}><input type="checkbox" name="outlet_ids" value={outlet.id} defaultChecked={editing ? editing.membership.outlet_ids?.includes(outlet.id) : outletChoices.length === 1} /><span>{outlet.name}</span></label>)}</div></fieldset>
@@ -212,7 +244,7 @@ export function StaffPage() {
     <Notice error={error} success={message} />
     <section className="data-card">
       <div className="data-card-heading"><Users size={19} /><h2>Team members</h2><span>{staff.length} total</span></div>
-      <div className="data-list">{staff.map((member) => <div className="data-row" key={member.id}><span className="member-avatar">{member.name.slice(0, 1)}</span><div><strong>{member.name}</strong><small>{member.email}{member.membership.salary_amount ? ` · ${member.membership.salary_amount} ${payLabel(member.membership.pay_cycle)}` : ''}</small></div><span className={member.membership.role?.is_owner ? 'owner-badge' : 'role-pill'}>{member.membership.role?.is_owner ? 'Owner / full admin' : (member.membership.role?.name ?? 'No role')}</span><small>{member.membership.outlet_ids?.length ?? 0} outlet{member.membership.outlet_ids?.length === 1 ? '' : 's'}</small><span className={`status-badge ${member.membership.is_active ? 'status-green' : 'status-red'}`}>{member.membership.is_active ? 'Active' : 'Inactive'}</span>{mayManageStaff && <button className="row-action" type="button" title={`Edit ${member.name}`} onClick={() => { setAdding(false); setEditing(member); setMessage(''); setError('') }}><Pencil size={16} /></button>}</div>)}{!staff.length && <Empty text="No staff members found." />}</div>
+        <div className="data-list">{staff.map((member) => <div className="data-row" key={member.id}><span className="member-avatar">{member.name.slice(0, 1)}</span><div><strong>{member.name}</strong><small>{member.email}{member.membership.salary_amount ? ` · ${member.membership.salary_amount} ${payLabel(member.membership.pay_cycle, member.membership.salary_due_on)}` : ''}</small></div><span className={member.membership.role?.is_owner ? 'owner-badge' : 'role-pill'}>{member.membership.role?.is_owner ? 'Owner / full admin' : (member.membership.role?.name ?? 'No role')}</span><small>{member.membership.outlet_ids?.length ?? 0} outlet{member.membership.outlet_ids?.length === 1 ? '' : 's'}</small><span className={`status-badge ${member.membership.is_active ? 'status-green' : 'status-red'}`}>{member.membership.is_active ? 'Active' : 'Inactive'}</span>{mayManageStaff && <button className="row-action" type="button" title={`Edit ${member.name}`} onClick={() => { setAdding(false); setEditing(member); setMessage(''); setError('') }}><Pencil size={16} /></button>}</div>)}{!staff.length && <Empty text="No staff members found." />}</div>
     </section>
   </>
 }

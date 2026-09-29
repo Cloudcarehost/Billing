@@ -183,3 +183,10 @@ button, input, select, textarea { font: inherit; } button { cursor: pointer; } a
 }
 
 .invoice-lines small { display: block; color: var(--color-muted); font-weight: 500; }
+.discount-linked-row { grid-template-columns: minmax(0, 140px) minmax(0, 180px) auto; }
+.bill-line-section { display: grid; gap: 0; margin-bottom: 8px; }
+.bill-line-section h3 { margin: 12px 0 6px; color: var(--color-muted); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.bill-line-subtotal { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0 4px; border-top: 1px dashed var(--color-line); color: var(--color-muted); font-size: 12px; font-weight: 700; }
+.internal-bill-section { margin-top: 10px; padding-top: 4px; border-top: 1px solid var(--color-line); }
+.bill-empty-lines { margin: 8px 0; color: var(--color-muted); font-size: 13px; }
+.joined-table-badge { display: inline-flex; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: #e8f1ff; color: #2457c5; font-size: 11px; font-weight: 700; }

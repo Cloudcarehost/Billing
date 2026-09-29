@@ -11,6 +11,27 @@ export const unwrap = <T,>(response: { data: ApiEnvelope<T> }) => response.data.
 export function isParcelTable(table?: Pick<DiningTable, 'service_type'> | null) {
   return table?.service_type === 'parcel'
 }
+export function isPrimaryMergedTable(table: DiningTable) {
+  return !table.primary_table || table.primary_table.id === table.id
+}
+export function mergedTableLabel(table: DiningTable) {
+  const joined = table.joined_tables ?? table.active_session?.joined_tables ?? []
+  const primaryName = table.primary_table?.name ?? table.active_session?.primary_table?.name ?? table.active_session?.dining_table?.name ?? table.name
+  if (table.primary_table && table.primary_table.id !== table.id) {
+    return { title: table.name, detail: `Joined to ${table.primary_table.name}` }
+  }
+  if (!joined.length) return { title: table.name, detail: null as string | null }
+  return { title: primaryName, detail: `with ${joined.map((entry) => entry.name).join(', ')}` }
+}
+export function sessionDisplayName(session: { display_name?: string; dining_table?: { name: string } | null; joined_tables?: Array<{ name: string }> } | null | undefined, fallback = 'Table') {
+  if (session?.display_name) return session.display_name
+  const names = [session?.dining_table?.name, ...(session?.joined_tables ?? []).map((entry) => entry.name)].filter(Boolean)
+  return names.length ? names.join(', ') : fallback
+}
+export function sessionCanTakeOrders(session?: { status?: string; invoice?: { id?: number } | null } | null) {
+  if (!session || session.invoice) return false
+  return session.status === 'occupied' || session.status === 'pending_bill'
+}
 export function isDirectBillOutlet(outlets: Session['outlets'] | undefined, outletId: number | null | undefined) {
   if (!outletId || !outlets) return false
   return outlets.find((outlet) => outlet.id === outletId)?.order_flow === 'direct_bill'

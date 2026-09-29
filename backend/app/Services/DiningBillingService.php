@@ -19,6 +19,7 @@ use App\Models\OrderItem;
 use App\Models\Outlet;
 use App\Models\Product;
 use App\Models\User;
+use App\Support\DiningSessionGuard;
 use App\Support\HotelDate;
 use App\Support\Money;
 use App\Support\Quantity;
@@ -41,7 +42,7 @@ class DiningBillingService
             if (! $table->is_active) {
                 $this->invalid('table', 'This dining table is inactive.');
             }
-            if (DiningSession::query()->where('dining_table_id', $table->id)->whereIn('status', ['occupied', 'pending_bill'])->lockForUpdate()->exists()) {
+            if (DiningSession::occupying($table->id, true)) {
                 $this->invalid('table', 'This dining table already has an active session.');
             }
             $session = DiningSession::query()->create(['hotel_id' => $table->outlet->hotel_id, 'outlet_id' => $table->outlet_id, 'dining_table_id' => $table->id, 'waiter_id' => $data['waiter_id'] ?? $user->id, 'customer_id' => $data['customer_id'] ?? null, 'guest_count' => $data['guest_count'] ?? 1, 'notes' => $data['notes'] ?? null, 'status' => 'occupied']);
@@ -60,12 +61,103 @@ class DiningBillingService
                 $this->invalid('session', 'A waiter can only be assigned on an open dining session.');
             }
             $session->update(['waiter_id' => $waiter->id]);
-            RestaurantUpdated::dispatch('session_assigned', $session->hotel_id, $session->outlet_id, $session->dining_table_id, $session->id, null, null, $waiter->id, null, RestaurantRealtime::payload($session->fresh(['diningTable', 'waiter']), [
+            RestaurantRealtime::dispatchToMembers('session_assigned', $session->fresh(['diningTable', 'waiter', 'joinedTables:id,name']), [
                 'waiter_id' => $waiter->id,
                 'waiter_name' => $waiter->name,
-            ]));
+            ]);
 
             return $session->fresh();
+        });
+    }
+
+    /**
+     * @param  list<int>  $tableIds
+     */
+    public function mergeTables(DiningSession $session, array $tableIds, ?int $primaryTableId = null): DiningSession
+    {
+        return DB::transaction(function () use ($session, $tableIds, $primaryTableId) {
+            $session = DiningSession::query()->with('joinedTables:id,name', 'diningTable')->lockForUpdate()->findOrFail($session->id);
+            if (! in_array($session->status, ['occupied', 'pending_bill'], true)) {
+                $this->invalid('session', 'Only an open session can merge tables.');
+            }
+            $wanted = collect($tableIds)->map(fn ($id) => (int) $id)->filter()->unique()->values();
+            $primaryId = $primaryTableId ? (int) $primaryTableId : $session->dining_table_id;
+            $group = collect($session->memberTableIds())->merge($wanted)->push($primaryId)->unique()->values();
+            $tables = DiningTable::query()->whereIn('id', $group)->lockForUpdate()->get()->keyBy('id');
+            $pending = $group->all();
+            $seen = [];
+            while ($pending !== []) {
+                $tableId = (int) array_shift($pending);
+                if (isset($seen[$tableId])) {
+                    continue;
+                }
+                $seen[$tableId] = true;
+                $table = $tables->get($tableId) ?? DiningTable::query()->lockForUpdate()->find($tableId);
+                if (! $table) {
+                    $this->invalid('table_ids', 'One or more tables were not found.');
+                }
+                $tables[$tableId] = $table;
+                if ($table->outlet_id !== $session->outlet_id) {
+                    $this->invalid('table_ids', 'Merged tables must belong to the same outlet.');
+                }
+                if ($table->isParcel()) {
+                    $this->invalid('table_ids', 'Parcel orders cannot be merged with dine-in tables.');
+                }
+                if (! $table->is_active) {
+                    $this->invalid('table_ids', 'An inactive table cannot be merged.');
+                }
+                $other = DiningSession::occupying($tableId, true);
+                if ($other && $other->id !== $session->id) {
+                    $absorbed = $other->memberTableIds();
+                    $this->absorbSession($other, $session);
+                    foreach ($absorbed as $absorbedId) {
+                        if (! isset($seen[$absorbedId])) {
+                            $pending[] = $absorbedId;
+                        }
+                    }
+                    $group = $group->merge($absorbed)->unique()->values();
+                }
+            }
+            if (! $tables->has($primaryId)) {
+                $this->invalid('primary_table_id', 'The main table must be part of the merged group.');
+            }
+            $extras = $group->reject(fn ($id) => $id === $primaryId)->all();
+            $session->joinedTables()->sync($extras);
+            if ($primaryId !== $session->dining_table_id) {
+                $session->update(['dining_table_id' => $primaryId]);
+            }
+            $this->recalculate($session);
+            $session = $session->fresh()->load('diningTable', 'waiter', 'joinedTables:id,name,code', 'orders.items');
+            RestaurantRealtime::dispatchToMembers('tables_merged', $session);
+
+            return $session;
+        });
+    }
+
+    public function unmergeTable(DiningSession $session, int $tableId): DiningSession
+    {
+        return DB::transaction(function () use ($session, $tableId) {
+            $session = DiningSession::query()->with('joinedTables:id,name')->lockForUpdate()->findOrFail($session->id);
+            if (! in_array($session->status, ['occupied', 'pending_bill'], true)) {
+                $this->invalid('session', 'Only an open session can release a merged table.');
+            }
+            if ($tableId === $session->dining_table_id) {
+                $this->invalid('table', 'Choose a different main table before removing this one.');
+            }
+            if (! $session->joinedTables->contains('id', $tableId)) {
+                $this->invalid('table', 'That table is not part of this merged group.');
+            }
+            $session->joinedTables()->detach($tableId);
+            $table = DiningTable::query()->find($tableId);
+            RestaurantUpdated::dispatch('table_closed', $session->hotel_id, $session->outlet_id, $tableId, $session->id, null, null, $session->waiter_id, null, RestaurantRealtime::payload($session->fresh(['diningTable', 'waiter', 'joinedTables:id,name']), [
+                'joined_table_ids' => [$tableId],
+                'reason' => 'unmerged',
+                'table_name' => $table?->name,
+            ]));
+            $session = $session->fresh()->load('diningTable', 'waiter', 'joinedTables:id,name,code', 'orders.items');
+            RestaurantRealtime::dispatchToMembers('tables_merged', $session);
+
+            return $session;
         });
     }
 
@@ -73,9 +165,7 @@ class DiningBillingService
     {
         return DB::transaction(function () use ($session, $user, $items, $notes) {
             $session = DiningSession::query()->with(['hotel', 'outlet'])->lockForUpdate()->findOrFail($session->id);
-            if ($session->status !== 'occupied') {
-                $this->invalid('session', 'Orders can only be added to an occupied dining session.');
-            }
+            DiningSessionGuard::assertOccupied($session);
             $directBill = $session->outlet?->order_flow === OutletOrderFlow::DirectBill->value;
             $round = ((int) $session->orders()->lockForUpdate()->max('round_number')) + 1;
             $order = $session->orders()->create(['created_by' => $user->id, 'ticket_number' => "ORD-{$session->id}-{$round}", 'round_number' => $round, 'notes' => $notes]);
@@ -116,12 +206,12 @@ class DiningBillingService
             }
             $this->orders->synchronizeStatus($order);
             $this->recalculate($session);
-            $order->load(['items', 'creator:id,name', 'diningSession.diningTable']);
-            $session->load(['diningTable', 'waiter', 'orders.items']);
-            RestaurantUpdated::dispatch('order_sent', $session->hotel_id, $session->outlet_id, $session->dining_table_id, $session->id, $order->id, null, $session->waiter_id, null, RestaurantRealtime::payload($session, [
+            $order->load(['items', 'creator:id,name', 'diningSession.diningTable', 'diningSession.joinedTables:id,name']);
+            $session->load(['diningTable', 'waiter', 'joinedTables:id,name,code', 'orders.items']);
+            RestaurantRealtime::dispatchToMembers('order_sent', $session, [
                 'ticket_number' => $order->ticket_number,
                 'kitchen_items' => $directBill ? [] : $order->items->where('fulfillment_mode', 'kitchen')->map(fn ($item) => RestaurantRealtime::kitchenItem($item))->values()->all(),
-            ]));
+            ], $order->id);
 
             return $session->fresh();
         });
@@ -178,7 +268,7 @@ class DiningBillingService
             } $this->recalculate($session);
             $session->update(['status' => 'pending_bill']);
             ReportService::invalidateDashboard($session->hotel_id);
-            RestaurantUpdated::dispatch('bill_requested', $session->hotel_id, $session->outlet_id, $session->dining_table_id, $session->id, null, null, $session->waiter_id, null, RestaurantRealtime::payload($session->load('diningTable', 'waiter', 'orders.items')));
+            RestaurantRealtime::dispatchToMembers('bill_requested', $session->load('diningTable', 'waiter', 'joinedTables:id,name', 'orders.items'));
 
             return $session->fresh();
         });
@@ -207,28 +297,40 @@ class DiningBillingService
             ]);
             $audit->record($session, 'dining_session.closed_without_sale', $user, $session->hotel_id, $session->outlet_id, ['reason' => $reason]);
             ReportService::invalidateDashboard($session->hotel_id);
-            RestaurantUpdated::dispatch('table_closed', $session->hotel_id, $session->outlet_id, $session->dining_table_id, $session->id, null, null, $session->waiter_id, null, RestaurantRealtime::payload($session->load('diningTable', 'waiter'), [
-                'reason' => 'closed_without_sale',
-            ]));
+            $this->closeMembers($session, ['reason' => 'closed_without_sale']);
 
             return $session->fresh();
         });
     }
 
-    public function applyDiscount(DiningSession $session, float $amount): DiningSession
+    public function applyDiscount(DiningSession $session, ?float $amount = null, ?float $percent = null): DiningSession
     {
-        return DB::transaction(function () use ($session, $amount) {
+        return DB::transaction(function () use ($session, $amount, $percent) {
             $session = DiningSession::query()->lockForUpdate()->findOrFail($session->id);
             if (! in_array($session->status, ['occupied', 'pending_bill'], true) || $session->invoice()->exists()) {
                 $this->invalid('session', 'Discounts can only be changed before an invoice is created.');
             }
-            $this->recalculate($session);
-            $maximum = Money::add($session->subtotal, $session->tax_amount, $session->service_charge_amount);
-            if (Money::toMinor($amount) > Money::toMinor($maximum)) {
-                $this->invalid('discount_amount', 'Discount cannot exceed the current bill total.');
+            $session->refreshTotals();
+            $maximumMinor = Money::toMinor($session->subtotal) + Money::toMinor($session->tax_amount) + Money::toMinor($session->service_charge_amount);
+            if ($percent !== null) {
+                if ($percent < 0 || $percent > 100) {
+                    $this->invalid('discount_percent', 'Discount percent must be between 0 and 100.');
+                }
+                $session->update([
+                    'discount_percent' => $percent,
+                    'discount_amount' => Money::fromMinor((int) round($maximumMinor * $percent / 100, 0, PHP_ROUND_HALF_UP)),
+                ]);
+            } else {
+                $amountMinor = Money::toMinor($amount ?? 0);
+                if ($amountMinor > $maximumMinor) {
+                    $this->invalid('discount_amount', 'Discount cannot exceed the current bill total.');
+                }
+                $session->update([
+                    'discount_percent' => null,
+                    'discount_amount' => Money::fromMinor($amountMinor),
+                ]);
             }
-            $session->update(['discount_amount' => Money::fromMinor(Money::toMinor($amount))]);
-            $this->recalculate($session);
+            $session->refreshTotals();
 
             return $session->fresh();
         });
@@ -287,10 +389,10 @@ class DiningBillingService
             }
 
             ReportService::invalidateDashboard($invoice->hotel_id);
-            RestaurantUpdated::dispatch('invoice_created', $session->hotel_id, $session->outlet_id, $session->dining_table_id, $session->id, null, null, $session->waiter_id, null, RestaurantRealtime::payload($session->load('diningTable', 'waiter', 'invoice'), [
+            RestaurantRealtime::dispatchToMembers('invoice_created', $session->load('diningTable', 'waiter', 'invoice', 'joinedTables:id,name'), [
                 'invoice_id' => $invoice->id,
                 'invoice_number' => $invoice->invoice_number,
-            ]));
+            ]);
 
             return $invoice->load('items', 'payments', 'diningSession.diningTable', 'chargedTo:id,name');
         });
@@ -315,7 +417,10 @@ class DiningBillingService
             $invoice->update(['paid_amount' => Money::fromMinor($paidMinor), 'balance_amount' => Money::fromMinor($balanceMinor), 'payment_status' => $balanceMinor === 0 ? PaymentStatus::Paid->value : PaymentStatus::Partial->value]);
             if ($balanceMinor === 0 && $invoice->diningSession) {
                 $invoice->diningSession()->update(['status' => 'closed', 'closed_at' => now()]);
-                RestaurantUpdated::dispatch('table_closed', $invoice->hotel_id, $invoice->outlet_id, $invoice->diningSession->dining_table_id, $invoice->diningSession->id, null, null, $invoice->diningSession->waiter_id, null, RestaurantRealtime::payload($invoice->diningSession->load('diningTable', 'waiter'), ['invoice_id' => $invoice->id]));
+                $closed = $invoice->diningSession->fresh();
+                if ($closed) {
+                    $this->closeMembers($closed, ['invoice_id' => $invoice->id]);
+                }
             }
             ReportService::invalidateDashboard($invoice->hotel_id);
 
@@ -359,11 +464,32 @@ class DiningBillingService
 
     private function recalculate(DiningSession $session): void
     {
-        $items = $session->orders()->with('items')->get()->flatMap->items->where('status', '!=', 'cancelled');
-        $subtotalMinor = $items->sum(fn ($item) => Money::toMinor($item->line_subtotal));
-        $taxMinor = $items->sum(fn ($item) => Money::toMinor($item->tax_amount));
-        $totalMinor = $subtotalMinor + $taxMinor - Money::toMinor($session->discount_amount) + Money::toMinor($session->service_charge_amount);
-        $session->update(['subtotal' => Money::fromMinor($subtotalMinor), 'tax_amount' => Money::fromMinor($taxMinor), 'total_amount' => Money::fromMinor($totalMinor)]);
+        $session->refreshTotals();
+    }
+
+    private function absorbSession(DiningSession $other, DiningSession $into): void
+    {
+        $other->loadMissing('joinedTables:id', 'orders');
+        $maxRound = (int) $into->orders()->lockForUpdate()->max('round_number');
+        foreach ($other->orders()->orderBy('round_number')->orderBy('id')->get() as $order) {
+            $maxRound++;
+            $order->update(['dining_session_id' => $into->id, 'round_number' => $maxRound]);
+        }
+        $into->update(['guest_count' => max(1, (int) $into->guest_count + (int) $other->guest_count)]);
+        $into->joinedTables()->syncWithoutDetaching($other->memberTableIds());
+        $other->joinedTables()->detach();
+        $other->update(['status' => 'closed', 'closed_at' => now(), 'closed_without_sale_reason' => 'Merged into another table']);
+    }
+
+    private function closeMembers(DiningSession $session, array $extra = []): void
+    {
+        $session->loadMissing('diningTable', 'waiter', 'joinedTables:id,name');
+        $ids = $session->memberTableIds();
+        $payload = RestaurantRealtime::payload($session, array_merge($extra, ['joined_table_ids' => $ids]));
+        foreach ($ids as $tableId) {
+            RestaurantUpdated::dispatch('table_closed', $session->hotel_id, $session->outlet_id, $tableId, $session->id, null, null, $session->waiter_id, null, $payload);
+        }
+        $session->joinedTables()->detach();
     }
 
     /** @return array<int, float|int> */

@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Events\RestaurantUpdated;
 use App\Models\OrderItem;
 use App\Models\User;
 use App\Support\DiningSessionGuard;
@@ -44,16 +43,16 @@ class KitchenService
             $this->orders->synchronizeStatus($item->order);
             $session = $item->order->diningSession;
             $audit->record($item, "order_item.{$status}", $user, $session->hotel_id, $session->outlet_id);
-            RestaurantUpdated::dispatch("item_{$status}", $session->hotel_id, $session->outlet_id, $session->dining_table_id, $session->id, $item->order_id, $item->id, $session->waiter_id, $item->kitchen_station_id, RestaurantRealtime::payload($session->load('diningTable', 'waiter', 'orders.items'), [
+            $session->load(['diningTable', 'waiter', 'joinedTables:id,name', 'orders.items']);
+            RestaurantRealtime::dispatchToMembers("item_{$status}", $session, [
                 'status' => $status,
-                'table_name' => $session->diningTable?->name,
                 'item_name' => $item->item_name,
                 'quantity' => $item->quantity,
                 'kitchen_item' => RestaurantRealtime::kitchenItem($item->fresh()),
-            ]));
+            ], $item->order_id, $item->id, $item->kitchen_station_id);
             if ($status === 'ready' && $session->waiter_id) {
                 $push = [$session->waiter_id, [
-                    'title' => ($session->diningTable?->name ?? 'Table').': order ready',
+                    'title' => ($session->displayName()).': order ready',
                     'body' => trim($item->quantity.' × '.$item->item_name).' is ready to serve.',
                     'tag' => 'ready-item-'.$item->id,
                     'url' => '/app/orders?table='.$session->dining_table_id,

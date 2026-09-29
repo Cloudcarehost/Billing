@@ -56,6 +56,7 @@ class UserController extends ApiController
             'outlet_ids.*' => ['integer'],
             'salary_amount' => ['nullable', 'numeric', 'min:0'],
             'pay_cycle' => ['nullable', Rule::in(['daily', 'weekly', 'monthly'])],
+            'salary_due_on' => ['nullable', 'date'],
         ]);
 
         $existing = User::query()->where('email', $data['email'])->exists();
@@ -95,6 +96,7 @@ class UserController extends ApiController
             'outlet_ids.*' => ['integer'],
             'salary_amount' => ['nullable', 'numeric', 'min:0'],
             'pay_cycle' => ['nullable', Rule::in(['daily', 'weekly', 'monthly'])],
+            'salary_due_on' => ['nullable', 'date'],
         ]);
 
         $currentRole = $hotel->roles()->findOrFail($user->pivot->role_id);
@@ -139,6 +141,7 @@ class UserController extends ApiController
                 'joined_at' => $user->pivot->joined_at,
                 'salary_amount' => $user->pivot->salary_amount,
                 'pay_cycle' => $user->pivot->pay_cycle,
+                'salary_due_on' => $user->pivot->salary_due_on,
                 'role' => $role?->only(['id', 'name', 'slug', 'is_owner']),
                 'outlet_ids' => DB::table('hotel_user_outlets')->where('hotel_id', $user->pivot->hotel_id)->where('user_id', $user->id)->pluck('outlet_id')->map(fn ($id) => (int) $id)->all(),
             ],

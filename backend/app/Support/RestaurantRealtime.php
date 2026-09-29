@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Events\RestaurantUpdated;
 use App\Models\DiningSession;
 use App\Models\DiningTable;
 use App\Models\OrderItem;
@@ -20,7 +21,7 @@ class RestaurantRealtime
             return $extra;
         }
 
-        $session->loadMissing(['diningTable:id,name,code,outlet_id,is_active,waiter_called_at', 'waiter:id,name', 'invoice:id,invoice_number,status,payment_status']);
+        $session->loadMissing(['diningTable:id,name,code,outlet_id,is_active,waiter_called_at', 'waiter:id,name', 'invoice:id,invoice_number,status,payment_status', 'joinedTables:id,name,code']);
         $items = $session->relationLoaded('orders')
             ? $session->orders->flatMap->items
             : OrderItem::query()->whereHas('order', fn ($query) => $query->where('dining_session_id', $session->id))->get();
@@ -35,9 +36,10 @@ class RestaurantRealtime
         $display = ! ($session->diningTable?->is_active ?? true) || $closed
             ? 'available'
             : ($session->status === 'pending_bill' ? 'pending_bill' : (($progress['served'] ?? 0) > 0 ? 'food_serving' : 'occupied'));
+        $joinedIds = $session->memberTableIds();
 
         return array_merge([
-            'table_name' => $session->diningTable?->name,
+            'table_name' => $session->displayName(),
             'display_status' => $display,
             'current_total' => (string) $session->total_amount,
             'session_status' => $session->status,
@@ -48,6 +50,10 @@ class RestaurantRealtime
             'waiter_called' => $session->diningTable?->waiter_called_at !== null,
             'invoice_id' => $session->invoice?->id,
             'invoice_number' => $session->invoice?->invoice_number,
+            'joined_table_ids' => $joinedIds,
+            'primary_table_id' => $session->dining_table_id,
+            'primary_table' => $session->diningTable ? ['id' => $session->diningTable->id, 'name' => $session->diningTable->name] : null,
+            'joined_tables' => $session->joinedTables->map(fn ($table) => ['id' => $table->id, 'name' => $table->name])->values()->all(),
         ], $extra);
     }
 
@@ -56,8 +62,9 @@ class RestaurantRealtime
      */
     public static function kitchenItem(OrderItem $item): array
     {
-        $item->loadMissing(['order.diningSession.diningTable:id,name,code', 'order.creator:id,name']);
+        $item->loadMissing(['order.diningSession.diningTable:id,name,code', 'order.diningSession.joinedTables:id,name', 'order.creator:id,name']);
         $order = $item->order;
+        $tableName = $order?->diningSession?->displayName() ?: ($order?->diningSession?->diningTable?->name ?? 'Table');
 
         return [
             'id' => $item->id,
@@ -78,7 +85,7 @@ class RestaurantRealtime
                 'creator' => $order->creator ? ['id' => $order->creator->id, 'name' => $order->creator->name] : null,
                 'dining_session' => [
                     'dining_table' => $order->diningSession?->diningTable
-                        ? ['name' => $order->diningSession->diningTable->name, 'code' => $order->diningSession->diningTable->code]
+                        ? ['name' => $tableName, 'code' => $order->diningSession->diningTable->code]
                         : null,
                 ],
             ] : null,
@@ -99,5 +106,27 @@ class RestaurantRealtime
             'table_name' => $table->name,
             'waiter_called' => $table->waiter_called_at !== null,
         ], $extra);
+    }
+
+    /**
+     * @param  array<string, mixed>  $extra
+     */
+    public static function dispatchToMembers(
+        string $type,
+        DiningSession $session,
+        array $extra = [],
+        ?int $orderId = null,
+        ?int $itemId = null,
+        ?int $stationId = null,
+    ): void {
+        $session->loadMissing('diningTable', 'waiter', 'joinedTables:id,name,code');
+        $ids = $session->memberTableIds();
+        $payload = self::payload($session, array_merge($extra, [
+            'joined_table_ids' => $ids,
+            'primary_table_id' => $session->dining_table_id,
+        ]));
+        foreach ($ids as $tableId) {
+            RestaurantUpdated::dispatch($type, $session->hotel_id, $session->outlet_id, $tableId, $session->id, $orderId, $itemId, $session->waiter_id, $stationId, $payload);
+        }
     }
 }

@@ -53,7 +53,7 @@ class User extends Authenticatable
     public function hotels(): BelongsToMany
     {
         return $this->belongsToMany(Hotel::class)
-            ->withPivot(['role_id', 'is_active', 'joined_at', 'salary_amount', 'pay_cycle'])
+            ->withPivot(['role_id', 'is_active', 'joined_at', 'salary_amount', 'pay_cycle', 'salary_due_on'])
             ->withTimestamps();
     }
 

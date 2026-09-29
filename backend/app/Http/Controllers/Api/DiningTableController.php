@@ -25,10 +25,21 @@ class DiningTableController extends ApiController
     public function status(Request $request): JsonResponse
     {
         $tables = $this->baseTables($request)->with('outlet:id,name,code')->orderBy('sort_order')->orderBy('name')->get();
-        $sessions = DiningSession::query()->whereIn('dining_table_id', $tables->pluck('id'))
+        $tableIds = $tables->pluck('id');
+        $sessions = DiningSession::query()
             ->whereIn('status', ['occupied', 'pending_bill'])
-            ->with('waiter:id,name', 'invoice')
-            ->get()->keyBy('dining_table_id');
+            ->where(function ($query) use ($tableIds) {
+                $query->whereIn('dining_table_id', $tableIds)
+                    ->orWhereHas('joinedTables', fn ($joined) => $joined->whereIn('dining_tables.id', $tableIds));
+            })
+            ->with('waiter:id,name', 'invoice', 'diningTable:id,name,code', 'joinedTables:id,name,code')
+            ->get();
+        $sessionsByTable = [];
+        foreach ($sessions as $session) {
+            foreach ($session->memberTableIds() as $tableId) {
+                $sessionsByTable[$tableId] = $session;
+            }
+        }
         $sessionIds = $sessions->pluck('id');
         $progress = DB::table('order_items')->join('orders', 'orders.id', '=', 'order_items.order_id')
             ->whereIn('orders.dining_session_id', $sessionIds)->groupBy('orders.dining_session_id')
@@ -40,8 +51,8 @@ class DiningTableController extends ApiController
             ->get(['orders.dining_session_id', 'order_items.id', 'order_items.item_name', 'order_items.quantity', 'order_items.status']);
         $previews = $previewRows->groupBy('dining_session_id')->map(fn ($items) => $items->take(3));
 
-        return $this->success($tables->map(function (DiningTable $table) use ($sessions, $progress, $previews) {
-            $session = $sessions->get($table->id);
+        return $this->success($tables->map(function (DiningTable $table) use ($sessionsByTable, $progress, $previews) {
+            $session = $sessionsByTable[$table->id] ?? null;
             $counts = $session ? $progress->get($session->id) : null;
             $displayStatus = ! $table->is_active ? 'available' : ($session?->status === 'pending_bill' ? 'pending_bill' : ($session ? (($counts?->served_count ?? 0) > 0 ? 'food_serving' : 'occupied') : 'available'));
 
@@ -51,8 +62,10 @@ class DiningTableController extends ApiController
                 'service_type' => $table->service_type ?? 'dine_in',
                 'waiter_called' => $table->waiter_called_at !== null,
                 'outlet' => $table->outlet, 'display_status' => $displayStatus, 'current_total' => $session?->total_amount ?? '0.00',
+                'primary_table' => $session?->diningTable ? ['id' => $session->diningTable->id, 'name' => $session->diningTable->name] : null,
+                'joined_tables' => $session ? $session->joinedTables->map(fn ($joined) => ['id' => $joined->id, 'name' => $joined->name])->values() : [],
                 'active_session' => $session ? [
-                    'id' => $session->id, 'dining_table_id' => $table->id, 'waiter_id' => $session->waiter_id,
+                    'id' => $session->id, 'dining_table_id' => $session->dining_table_id, 'waiter_id' => $session->waiter_id,
                     'guest_count' => $session->guest_count, 'status' => $session->status, 'subtotal' => $session->subtotal,
                     'tax_amount' => $session->tax_amount, 'total_amount' => $session->total_amount, 'opened_at' => $session->opened_at,
                     'waiter' => $session->waiter, 'invoice' => $session->invoice,
@@ -64,6 +77,9 @@ class DiningTableController extends ApiController
                         'items' => ($previews->get($session->id) ?? collect())->map(fn ($item) => ['id' => $item->id, 'item_name' => $item->item_name, 'quantity' => $item->quantity, 'status' => $item->status])->values(),
                     ]],
                     'bill_requested' => $session->status === 'pending_bill',
+                    'display_name' => $session->displayName(),
+                    'joined_tables' => $session->joinedTables->map(fn ($joined) => ['id' => $joined->id, 'name' => $joined->name])->values(),
+                    'primary_table' => $session->diningTable ? ['id' => $session->diningTable->id, 'name' => $session->diningTable->name] : null,
                 ] : null,
             ];
         })->values());
@@ -84,7 +100,7 @@ class DiningTableController extends ApiController
         $hotel = $request->attributes->get('currentHotel');
         $table = $this->tables($request)->findOrFail($table);
         $data = $this->validated($request, $hotel, $table);
-        if (($data['is_active'] ?? true) === false && $table->activeSession()->exists()) {
+        if (($data['is_active'] ?? true) === false && ($table->activeSession()->exists() || DiningSession::occupying($table->id))) {
             abort(422, 'A table with an active session cannot be disabled.');
         }
         $table->update($data);
@@ -139,7 +155,7 @@ class DiningTableController extends ApiController
         $diningTable = $this->baseTables($request)->with('outlet:id,hotel_id', 'activeSession')->findOrFail($table);
         if ($diningTable->waiter_called_at) {
             $diningTable->update(['waiter_called_at' => null]);
-            $session = $diningTable->activeSession;
+            $session = $diningTable->activeSession ?? DiningSession::occupying($diningTable->id);
             RestaurantUpdated::dispatch('waiter_call_cleared', $diningTable->outlet->hotel_id, $diningTable->outlet_id, $diningTable->id, $session?->id, null, null, $session?->waiter_id, null, RestaurantRealtime::table($diningTable, $session, [
                 'table_name' => $diningTable->name,
                 'waiter_called' => false,
@@ -184,10 +200,10 @@ class DiningTableController extends ApiController
 
     private function present(DiningTable $table): array
     {
-        $session = $table->activeSession;
+        $session = $table->activeSession ?? DiningSession::occupying($table->id)?->load('orders.items', 'waiter:id,name', 'diningTable:id,name', 'joinedTables:id,name');
         $hasServedFood = $session?->orders->flatMap->items->contains(fn ($item) => $item->status === 'served') ?? false;
         $displayStatus = ! $table->is_active ? 'available' : ($session?->status === 'pending_bill' ? 'pending_bill' : ($session ? ($hasServedFood ? 'food_serving' : 'occupied') : 'available'));
 
-        return ['id' => $table->id, 'outlet_id' => $table->outlet_id, 'name' => $table->name, 'code' => $table->code, 'capacity' => $table->capacity, 'sort_order' => $table->sort_order, 'is_active' => $table->is_active, 'service_type' => $table->service_type ?? 'dine_in', 'waiter_called' => $table->waiter_called_at !== null, 'outlet' => $table->outlet, 'display_status' => $displayStatus, 'active_session' => $session, 'current_total' => $session?->total_amount ?? '0.00'];
+        return ['id' => $table->id, 'outlet_id' => $table->outlet_id, 'name' => $table->name, 'code' => $table->code, 'capacity' => $table->capacity, 'sort_order' => $table->sort_order, 'is_active' => $table->is_active, 'service_type' => $table->service_type ?? 'dine_in', 'waiter_called' => $table->waiter_called_at !== null, 'outlet' => $table->outlet, 'display_status' => $displayStatus, 'primary_table' => $session?->diningTable ? ['id' => $session->diningTable->id, 'name' => $session->diningTable->name] : null, 'joined_tables' => $session ? $session->joinedTables?->map(fn ($joined) => ['id' => $joined->id, 'name' => $joined->name])->values() ?? [] : [], 'active_session' => $session, 'current_total' => $session?->total_amount ?? '0.00'];
     }
 }

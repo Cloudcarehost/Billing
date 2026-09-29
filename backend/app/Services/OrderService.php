@@ -2,13 +2,11 @@
 
 namespace App\Services;
 
-use App\Events\RestaurantUpdated;
 use App\Models\DiningSession;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\User;
 use App\Support\DiningSessionGuard;
-use App\Support\Money;
 use App\Support\RestaurantRealtime;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -29,14 +27,14 @@ class OrderService
             } $session = $item->order->diningSession;
             $this->synchronizeStatus($item->order);
             $this->recalculate($session);
-            RestaurantUpdated::dispatch('item_cancelled', $session->hotel_id, $session->outlet_id, $session->dining_table_id, $session->id, $item->order_id, $item->id, $session->waiter_id, $item->kitchen_station_id, RestaurantRealtime::payload($session->load('diningTable', 'waiter', 'orders.items'), [
+            $session->load(['diningTable', 'waiter', 'joinedTables:id,name', 'orders.items']);
+            RestaurantRealtime::dispatchToMembers('item_cancelled', $session, [
                 'status' => 'cancelled',
                 'reason' => $reason,
-                'table_name' => $session->diningTable?->name,
                 'item_name' => $item->item_name,
                 'quantity' => $item->quantity,
                 'kitchen_item' => RestaurantRealtime::kitchenItem($item),
-            ]));
+            ], $item->order_id, $item->id, $item->kitchen_station_id);
 
             return $item->fresh();
         });
@@ -76,10 +74,6 @@ class OrderService
 
     public function recalculate(DiningSession $session): void
     {
-        $items = $session->orders()->with('items')->get()->flatMap->items->where('status', '!=', 'cancelled');
-        $subtotalMinor = $items->sum(fn ($item) => Money::toMinor($item->line_subtotal));
-        $taxMinor = $items->sum(fn ($item) => Money::toMinor($item->tax_amount));
-        $totalMinor = $subtotalMinor + $taxMinor - Money::toMinor($session->discount_amount) + Money::toMinor($session->service_charge_amount);
-        $session->update(['subtotal' => Money::fromMinor($subtotalMinor), 'tax_amount' => Money::fromMinor($taxMinor), 'total_amount' => Money::fromMinor($totalMinor)]);
+        $session->refreshTotals();
     }
 }

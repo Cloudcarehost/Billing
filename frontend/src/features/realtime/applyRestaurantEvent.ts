@@ -34,7 +34,14 @@ export function tableWithSession(table: DiningTable, session: DiningSession | nu
     served: items.filter((item) => item.status === 'served').length,
   }
   const display = session.status === 'pending_bill' ? 'pending_bill' : progress.served > 0 ? 'food_serving' : 'occupied'
-  return { ...table, current_total: session.total_amount, display_status: display, active_session: { ...session, kitchen_progress: progress } }
+  return {
+    ...table,
+    current_total: session.total_amount,
+    display_status: display,
+    primary_table: session.primary_table ?? table.primary_table,
+    joined_tables: session.joined_tables ?? table.joined_tables,
+    active_session: { ...session, kitchen_progress: progress },
+  }
 }
 
 function patchSession(session: DiningSession, event: RestaurantEvent): DiningSession {
@@ -76,32 +83,42 @@ function patchSession(session: DiningSession, event: RestaurantEvent): DiningSes
     kitchen_progress: progressFrom(event, session.kitchen_progress),
     invoice: event.type === 'invoice_reopened' ? null : typeof data.invoice_id === 'number' ? { ...(session.invoice ?? { id: data.invoice_id, invoice_number: String(data.invoice_number ?? ''), status: 'issued', payment_status: 'unpaid', total_amount: String(data.current_total ?? session.total_amount), paid_amount: '0.00', balance_amount: String(data.current_total ?? session.total_amount) }), id: data.invoice_id, invoice_number: String(data.invoice_number ?? session.invoice?.invoice_number ?? '') } : session.invoice,
     orders,
+    display_name: typeof data.table_name === 'string' ? data.table_name : session.display_name,
+    primary_table: (data.primary_table as DiningSession['primary_table']) ?? session.primary_table,
+    joined_tables: Array.isArray(data.joined_tables) ? data.joined_tables as DiningSession['joined_tables'] : session.joined_tables,
   }
+}
+
+function targetTableIds(event: RestaurantEvent): number[] {
+  const extra = Array.isArray(event.data?.joined_table_ids) ? event.data.joined_table_ids.filter((id): id is number => typeof id === 'number') : []
+  return [...new Set([event.table_id, ...extra].filter((id): id is number => typeof id === 'number'))]
 }
 
 export function applyTableEvent(tables: DiningTable[], event: RestaurantEvent): { tables: DiningTable[]; handled: boolean; needsSession: number | null } {
   if (event.type === 'connection_restored') return { tables, handled: true, needsSession: null }
+  const ids = targetTableIds(event)
   const tableId = event.table_id
-  if (!tableId) return { tables, handled: false, needsSession: null }
-  const index = tables.findIndex((table) => table.id === tableId)
-  if (index < 0) return { tables, handled: false, needsSession: null }
-  const table = tables[index]
+  if (!ids.length && !tableId) return { tables, handled: false, needsSession: null }
   const data = dataOf(event)
+  const present = tables.some((table) => ids.includes(table.id) || (event.session_id != null && table.active_session?.id === event.session_id))
+  if (!present) return { tables, handled: false, needsSession: event.session_id ?? null }
 
   if (event.type === 'waiter_called' || event.type === 'waiter_call_cleared') {
-    const next = tables.map((entry) => entry.id === tableId ? { ...entry, waiter_called: event.type === 'waiter_called' } : entry)
+    const next = tables.map((entry) => ids.includes(entry.id) ? { ...entry, waiter_called: event.type === 'waiter_called' } : entry)
     return { tables: next, handled: true, needsSession: null }
   }
 
   if (event.type === 'table_closed') {
-    const next = tables.map((entry) => entry.id === tableId ? { ...entry, display_status: 'available' as const, current_total: '0.00', waiter_called: false, active_session: null } : entry)
+    const next = tables.map((entry) => ids.includes(entry.id) ? { ...entry, display_status: 'available' as const, current_total: '0.00', waiter_called: false, active_session: null, primary_table: null, joined_tables: [] } : entry)
     return { tables: next, handled: true, needsSession: null }
   }
 
-  if (event.type === 'session_opened' && !table.active_session && event.session_id) {
-    const opened: DiningSession = {
+  const attachSession = event.type === 'session_opened' || event.type === 'tables_merged'
+  if (attachSession && event.session_id) {
+    const source = tables.find((entry) => entry.active_session?.id === event.session_id)?.active_session
+    const opened: DiningSession = source ?? {
       id: event.session_id,
-      dining_table_id: tableId,
+      dining_table_id: typeof data.primary_table_id === 'number' ? data.primary_table_id : (tableId ?? event.session_id),
       waiter_id: event.waiter_id ?? null,
       guest_count: typeof data.guest_count === 'number' ? data.guest_count : 1,
       status: 'occupied',
@@ -112,28 +129,43 @@ export function applyTableEvent(tables: DiningTable[], event: RestaurantEvent): 
       waiter: typeof data.waiter_name === 'string' ? { id: event.waiter_id ?? 0, name: data.waiter_name } : null,
       orders: [],
       kitchen_progress: progressFrom(event, { pending: 0, preparing: 0, ready: 0, served: 0 }),
+      primary_table: data.primary_table as DiningSession['primary_table'],
+      joined_tables: Array.isArray(data.joined_tables) ? data.joined_tables as DiningSession['joined_tables'] : [],
+      display_name: typeof data.table_name === 'string' ? data.table_name : undefined,
     }
-    const next = tables.map((entry) => entry.id === tableId ? tableWithSession(entry, opened) : entry)
+    const next = tables.map((entry) => {
+      if (!ids.includes(entry.id)) return entry
+      if (event.type === 'session_opened' && entry.active_session) return entry
+      return tableWithSession(entry, opened)
+    })
     return { tables: next, handled: true, needsSession: event.session_id }
   }
 
-  if (!table.active_session) return { tables, handled: false, needsSession: event.session_id ?? null }
-
-  const patched = patchSession(table.active_session, event)
-  const display = typeof data.display_status === 'string' ? data.display_status as DiningTable['display_status'] : undefined
-  const nextTable: DiningTable = {
-    ...table,
-    current_total: patched.total_amount,
-    display_status: display ?? (patched.status === 'pending_bill' ? 'pending_bill' : (patched.kitchen_progress?.served ?? 0) > 0 ? 'food_serving' : 'occupied'),
-    waiter_called: typeof data.waiter_called === 'boolean' ? data.waiter_called : table.waiter_called,
-    active_session: patched,
-  }
-  const next = tables.map((entry) => entry.id === tableId ? nextTable : entry)
+  const next = tables.map((entry) => {
+    const listed = ids.includes(entry.id)
+    const sameSession = event.session_id != null && entry.active_session?.id === event.session_id
+    if (!listed && !sameSession) return entry
+    if (!entry.active_session) return entry
+    const patched = patchSession(entry.active_session, event)
+    const display = typeof data.display_status === 'string' ? data.display_status as DiningTable['display_status'] : undefined
+    return {
+      ...entry,
+      current_total: patched.total_amount,
+      display_status: display ?? (patched.status === 'pending_bill' ? 'pending_bill' : (patched.kitchen_progress?.served ?? 0) > 0 ? 'food_serving' : 'occupied'),
+      waiter_called: typeof data.waiter_called === 'boolean' ? data.waiter_called : entry.waiter_called,
+      primary_table: (data.primary_table as DiningTable['primary_table']) ?? entry.primary_table,
+      joined_tables: Array.isArray(data.joined_tables) ? data.joined_tables as DiningTable['joined_tables'] : entry.joined_tables,
+      active_session: patched,
+    }
+  })
+  const table = tables.find((entry) => entry.id === tableId) ?? tables.find((entry) => entry.active_session?.id === event.session_id)
+  if (!table?.active_session) return { tables: next, handled: true, needsSession: event.session_id ?? null }
   const knownItems = new Set((table.active_session.orders ?? []).flatMap((order) => order.items.map((item) => item.id)))
+  const patchedId = table.active_session.id
   const needsSession = event.type === 'order_sent' && asItems(data.kitchen_items).some((item) => !knownItems.has(item.id) && !item.line_total)
-    ? patched.id
+    ? patchedId
     : event.type === 'item_ready' || event.type === 'item_preparing' || event.type === 'item_cancelled' || event.type === 'item_served'
-      ? (event.item_id && knownItems.has(event.item_id) ? null : patched.id)
+      ? (event.item_id && knownItems.has(event.item_id) ? null : patchedId)
       : null
   return { tables: next, handled: true, needsSession }
 }

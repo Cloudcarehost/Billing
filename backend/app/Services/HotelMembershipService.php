@@ -11,7 +11,7 @@ class HotelMembershipService
 {
     public function __construct(private readonly AuthAccessCache $access) {}
 
-    /** @param array{name: string, email: string, password?: string, role_id: int, is_active: bool, outlet_ids?: array<int, int>, salary_amount?: mixed, pay_cycle?: ?string} $data */
+    /** @param array{name: string, email: string, password?: string, role_id: int, is_active: bool, outlet_ids?: array<int, int>, salary_amount?: mixed, pay_cycle?: ?string, salary_due_on?: ?string} $data */
     public function create(Hotel $hotel, array $data): User
     {
         $user = DB::transaction(function () use ($hotel, $data): User {
@@ -43,7 +43,7 @@ class HotelMembershipService
         return $user;
     }
 
-    /** @param array{name?: string, password?: string, role_id: int, is_active: bool, outlet_ids?: array<int, int>, salary_amount?: mixed, pay_cycle?: ?string} $data */
+    /** @param array{name?: string, password?: string, role_id: int, is_active: bool, outlet_ids?: array<int, int>, salary_amount?: mixed, pay_cycle?: ?string, salary_due_on?: ?string} $data */
     public function update(Hotel $hotel, User $user, array $data): User
     {
         $user = DB::transaction(function () use ($hotel, $user, $data): User {
@@ -72,20 +72,24 @@ class HotelMembershipService
         return $user;
     }
 
-    /** @return array{salary_amount: mixed, pay_cycle: ?string}|array{} */
+    /** @return array{salary_amount: mixed, pay_cycle: ?string, salary_due_on: ?string}|array{} */
     private function payPayload(array $data, bool $required = false): array
     {
-        if (! $required && ! array_key_exists('salary_amount', $data) && ! array_key_exists('pay_cycle', $data)) {
+        if (! $required && ! array_key_exists('salary_amount', $data) && ! array_key_exists('pay_cycle', $data) && ! array_key_exists('salary_due_on', $data)) {
             return [];
         }
         $amount = $data['salary_amount'] ?? null;
         if ($amount === '' || $amount === null || (float) $amount <= 0) {
-            return ['salary_amount' => null, 'pay_cycle' => null];
+            return ['salary_amount' => null, 'pay_cycle' => null, 'salary_due_on' => null];
         }
         $cycle = $data['pay_cycle'] ?? null;
         abort_unless(in_array($cycle, ['daily', 'weekly', 'monthly'], true), 422, 'Select a pay cycle for salary.');
+        $dueOn = $data['salary_due_on'] ?? null;
+        if (in_array($cycle, ['weekly', 'monthly'], true) && ($dueOn === null || $dueOn === '')) {
+            abort(422, 'Select a pay day for this salary.');
+        }
 
-        return ['salary_amount' => $amount, 'pay_cycle' => $cycle];
+        return ['salary_amount' => $amount, 'pay_cycle' => $cycle, 'salary_due_on' => $cycle === 'daily' ? null : $dueOn];
     }
 
     private function role(Hotel $hotel, int $roleId): Role

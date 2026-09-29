@@ -30,7 +30,7 @@ class Hotel extends Model
     public function users(): BelongsToMany
     {
         return $this->belongsToMany(User::class)
-            ->withPivot(['role_id', 'is_active', 'joined_at', 'salary_amount', 'pay_cycle'])
+            ->withPivot(['role_id', 'is_active', 'joined_at', 'salary_amount', 'pay_cycle', 'salary_due_on'])
             ->withTimestamps();
     }
 

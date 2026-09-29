@@ -124,6 +124,8 @@ Route::prefix('v1')->group(function (): void {
         Route::post('tables/{table}/sessions', [DiningSessionController::class, 'open'])->middleware('permission:sessions.open');
         Route::get('dining-staff', [DiningSessionController::class, 'staff'])->middleware('permission:sessions.assign');
         Route::post('dining-sessions/{session}/assign-waiter', [DiningSessionController::class, 'assignWaiter'])->middleware('permission:sessions.assign');
+        Route::post('dining-sessions/{session}/merge-tables', [DiningSessionController::class, 'mergeTables'])->middleware('permission:sessions.open');
+        Route::post('dining-sessions/{session}/unmerge-table', [DiningSessionController::class, 'unmergeTable'])->middleware('permission:sessions.open');
         Route::get('dining-sessions/{session}', [DiningSessionController::class, 'show'])->middleware('permission:orders.view');
         Route::post('dining-sessions/{session}/orders', [DiningSessionController::class, 'addOrder'])->middleware(['permission:orders.create', 'idempotent:order']);
         Route::post('dining-sessions/{session}/request-bill', [DiningSessionController::class, 'requestBill'])->middleware('permission:billing.request');

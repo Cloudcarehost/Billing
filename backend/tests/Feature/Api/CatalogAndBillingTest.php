@@ -171,6 +171,48 @@ class CatalogAndBillingTest extends TestCase
         $this->assertEquals(40, (float) $categorySales->firstWhere('category', 'Drinks')['sales']);
     }
 
+    public function test_percent_discount_recalculates_when_items_are_added_after_bill_request(): void
+    {
+        [$owner, $hotel] = $this->ownerContext();
+        $outlet = $hotel->outlets()->sole();
+        $table = DiningTable::query()->create(['outlet_id' => $outlet->id, 'name' => 'Table 1', 'code' => 'T1', 'capacity' => 4]);
+        $product = Product::query()->create(['hotel_id' => $hotel->id, 'name' => 'Tea', 'selling_price' => 100, 'track_inventory' => false]);
+
+        $sessionId = $this->actingAs($owner, 'web')->postJson("/api/v1/tables/{$table->id}/sessions", ['guest_count' => 2])->json('data.id');
+        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'discount-first')->postJson("/api/v1/dining-sessions/{$sessionId}/orders", [
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ])->assertCreated()->assertJsonPath('data.total_amount', '100.00');
+
+        $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/discount", ['discount_percent' => 10])
+            ->assertOk()
+            ->assertJsonPath('data.discount_amount', '10.00')
+            ->assertJsonPath('data.total_amount', '90.00');
+        $this->assertEquals(10, (float) $this->actingAs($owner, 'web')->getJson("/api/v1/dining-sessions/{$sessionId}")->json('data.discount_percent'));
+
+        $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/discount", ['discount_amount' => 10])
+            ->assertOk()
+            ->assertJsonPath('data.discount_amount', '10.00')
+            ->assertJsonPath('data.discount_percent', null)
+            ->assertJsonPath('data.total_amount', '90.00');
+
+        $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/discount", ['discount_percent' => 10])->assertOk();
+        $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/request-bill")->assertOk();
+        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'discount-second')->postJson("/api/v1/dining-sessions/{$sessionId}/orders", [
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ])->assertCreated()
+            ->assertJsonPath('data.discount_amount', '20.00')
+            ->assertJsonPath('data.total_amount', '180.00');
+
+        $invoice = $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/invoice")
+            ->assertCreated()
+            ->assertJsonPath('data.total_amount', '180.00')
+            ->assertJsonPath('data.discount_amount', '20.00');
+        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'discount-locked')->postJson("/api/v1/dining-sessions/{$sessionId}/orders", [
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ])->assertUnprocessable();
+        $this->assertNotEmpty($invoice->json('data.id'));
+    }
+
     public function test_owner_cannot_delete_the_last_outlet(): void
     {
         [$owner, $hotel] = $this->ownerContext();

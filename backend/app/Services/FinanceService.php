@@ -78,7 +78,8 @@ class FinanceService
                 continue;
             }
             $cycle = (string) $user->pivot->pay_cycle;
-            $period = $this->periodAmount($cycle, $rate, $from, $to, $user->pivot->joined_at ? (string) $user->pivot->joined_at : null);
+            $dueOn = $user->pivot->salary_due_on ? (string) $user->pivot->salary_due_on : null;
+            $period = $this->periodAmount($cycle, $rate, $from, $to, $user->pivot->joined_at ? (string) $user->pivot->joined_at : null, $dueOn);
             if ($period['units'] < 1) {
                 continue;
             }
@@ -91,7 +92,7 @@ class FinanceService
                 'units' => $period['units'],
                 'amount' => $period['amount'],
                 'detail' => $period['detail'],
-                'due_on' => null,
+                'due_on' => $dueOn,
                 'due_dates' => $period['due_dates'],
             ];
         }

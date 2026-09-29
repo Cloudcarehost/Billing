@@ -27,7 +27,13 @@ class InvoiceService
             } $invoice->update(['status' => 'voided', 'voided_at' => now(), 'voided_by' => $user->id, 'void_reason' => $reason]);
             if ($session && $session->status !== 'closed') {
                 $session->update(['status' => 'closed', 'closed_at' => now()]);
-                RestaurantUpdated::dispatch('table_closed', $invoice->hotel_id, $invoice->outlet_id, $session->dining_table_id, $session->id, null, null, $session->waiter_id, null, RestaurantRealtime::payload($session->load('diningTable', 'waiter'), ['invoice_id' => $invoice->id, 'voided' => true]));
+                $session->loadMissing('diningTable', 'waiter', 'joinedTables:id,name');
+                $ids = $session->memberTableIds();
+                $payload = RestaurantRealtime::payload($session, ['invoice_id' => $invoice->id, 'voided' => true, 'joined_table_ids' => $ids]);
+                foreach ($ids as $tableId) {
+                    RestaurantUpdated::dispatch('table_closed', $invoice->hotel_id, $invoice->outlet_id, $tableId, $session->id, null, null, $session->waiter_id, null, $payload);
+                }
+                $session->joinedTables()->detach();
             }
             ReportService::invalidateDashboard($invoice->hotel_id);
 
@@ -54,11 +60,12 @@ class InvoiceService
             $invoice->update(['status' => 'voided', 'voided_at' => now(), 'voided_by' => $user->id, 'void_reason' => $reason]);
             $session->update(['status' => 'occupied', 'closed_at' => null]);
             ReportService::invalidateDashboard($invoice->hotel_id);
-            RestaurantUpdated::dispatch('invoice_reopened', $invoice->hotel_id, $invoice->outlet_id, $session->dining_table_id, $session->id, null, null, $session->waiter_id, null, RestaurantRealtime::payload($session->load('diningTable', 'waiter', 'orders.items'), [
+            $session->loadMissing('diningTable', 'waiter', 'orders.items', 'joinedTables:id,name');
+            RestaurantRealtime::dispatchToMembers('invoice_reopened', $session, [
                 'invoice_id' => $invoice->id,
                 'voided' => true,
                 'session_status' => 'occupied',
-            ]));
+            ]);
 
             return $session->fresh()->load('diningTable', 'waiter', 'orders.items', 'invoice');
         });

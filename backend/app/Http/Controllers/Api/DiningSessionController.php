@@ -89,6 +89,26 @@ class DiningSessionController extends ApiController
         return $this->success($this->session($service->addOrder($session, $request->user(), $data['items'], $data['notes'] ?? null)), 'Order round sent.', 201);
     }
 
+    public function mergeTables(Request $request, int $session, DiningBillingService $service): JsonResponse
+    {
+        $session = $this->sessions($request)->findOrFail($session);
+        $data = $request->validate([
+            'table_ids' => ['required', 'array', 'min:1'],
+            'table_ids.*' => ['integer'],
+            'primary_table_id' => ['nullable', 'integer'],
+        ]);
+
+        return $this->success($this->session($service->mergeTables($session, $data['table_ids'], $data['primary_table_id'] ?? null)), 'Tables merged.');
+    }
+
+    public function unmergeTable(Request $request, int $session, DiningBillingService $service): JsonResponse
+    {
+        $session = $this->sessions($request)->findOrFail($session);
+        $data = $request->validate(['table_id' => ['required', 'integer']]);
+
+        return $this->success($this->session($service->unmergeTable($session, (int) $data['table_id'])), 'Table removed from the group.');
+    }
+
     public function requestBill(Request $request, int $session, DiningBillingService $service): JsonResponse
     {
         $hotel = $request->attributes->get('currentHotel');
@@ -110,17 +130,31 @@ class DiningSessionController extends ApiController
     {
         $hotel = $request->attributes->get('currentHotel');
         $session = $this->sessions($request)->findOrFail($session);
-        $data = $request->validate(['discount_amount' => ['required', 'numeric', 'min:0']]);
-
-        $session = $service->applyDiscount($session, (float) $data['discount_amount']);
-        $audit->record($session, 'billing.discount_applied', $request->user(), $hotel->id, $session->outlet_id, ['amount' => $data['discount_amount']]);
+        $data = $request->validate([
+            'discount_amount' => ['nullable', 'numeric', 'min:0'],
+            'discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
+        ]);
+        if (! array_key_exists('discount_amount', $data) && ! array_key_exists('discount_percent', $data)) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['discount_amount' => ['Enter a discount amount or percent.']]);
+        }
+        $percent = array_key_exists('discount_percent', $data) && $data['discount_percent'] !== null
+            ? (float) $data['discount_percent']
+            : null;
+        $amount = array_key_exists('discount_amount', $data) ? (float) $data['discount_amount'] : null;
+        $session = $service->applyDiscount($session, $amount, $percent);
+        $audit->record($session, 'billing.discount_applied', $request->user(), $hotel->id, $session->outlet_id, [
+            'amount' => $session->discount_amount,
+            'percent' => $session->discount_percent,
+        ]);
 
         return $this->success($this->session($session), 'Discount applied.');
     }
 
     private function session(DiningSession $session): DiningSession
     {
-        $session->load('diningTable:id,outlet_id,name,code,capacity,service_type', 'waiter:id,name', 'customer:id,name,phone', 'orders.items.product.category:id,name,print_on_bill', 'invoice.chargedTo:id,name');
+        $session->load('diningTable:id,outlet_id,name,code,capacity,service_type', 'waiter:id,name', 'customer:id,name,phone', 'orders.items.product.category:id,name,print_on_bill', 'invoice.chargedTo:id,name', 'joinedTables:id,name,code,capacity');
+        $session->setAttribute('primary_table', $session->diningTable ? $session->diningTable->only(['id', 'name', 'code']) : null);
+        $session->setAttribute('display_name', $session->displayName());
         $history = collect([['status' => 'session_opened', 'occurred_at' => $session->opened_at?->toISOString()]])
             ->merge($session->orders->flatMap(function ($order) {
                 $entries = collect([['status' => 'order_sent', 'order_id' => $order->id, 'occurred_at' => $order->sent_at?->toISOString()]]);
