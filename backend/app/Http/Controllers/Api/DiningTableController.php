@@ -34,10 +34,11 @@ class DiningTableController extends ApiController
             ->whereIn('orders.dining_session_id', $sessionIds)->groupBy('orders.dining_session_id')
             ->selectRaw("orders.dining_session_id, COUNT(*) active_item_count, SUM(CASE WHEN order_items.status = 'pending' THEN 1 ELSE 0 END) pending_count, SUM(CASE WHEN order_items.status = 'preparing' THEN 1 ELSE 0 END) preparing_count, SUM(CASE WHEN order_items.status = 'ready' THEN 1 ELSE 0 END) ready_count, SUM(CASE WHEN order_items.status = 'served' THEN 1 ELSE 0 END) served_count")
             ->get()->keyBy('dining_session_id');
-        $rankedItems = DB::table('order_items')->join('orders', 'orders.id', '=', 'order_items.order_id')
+        $previewRows = DB::table('order_items')->join('orders', 'orders.id', '=', 'order_items.order_id')
             ->whereIn('orders.dining_session_id', $sessionIds)->where('order_items.status', '!=', 'cancelled')
-            ->selectRaw('orders.dining_session_id, order_items.id, order_items.item_name, order_items.quantity, order_items.status, ROW_NUMBER() OVER (PARTITION BY orders.dining_session_id ORDER BY order_items.id DESC) row_number');
-        $previews = DB::query()->fromSub($rankedItems, 'ranked_items')->where('row_number', '<=', 3)->get()->groupBy('dining_session_id');
+            ->orderByDesc('order_items.id')
+            ->get(['orders.dining_session_id', 'order_items.id', 'order_items.item_name', 'order_items.quantity', 'order_items.status']);
+        $previews = $previewRows->groupBy('dining_session_id')->map(fn ($items) => $items->take(3));
 
         return $this->success($tables->map(function (DiningTable $table) use ($sessions, $progress, $previews) {
             $session = $sessions->get($table->id);
