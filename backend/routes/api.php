@@ -130,6 +130,7 @@ Route::prefix('v1')->group(function (): void {
         Route::post('dining-sessions/{session}/orders', [DiningSessionController::class, 'addOrder'])->middleware(['permission:orders.create', 'idempotent:order']);
         Route::post('dining-sessions/{session}/request-bill', [DiningSessionController::class, 'requestBill'])->middleware('permission:billing.request');
         Route::post('dining-sessions/{session}/close-without-sale', [DiningSessionController::class, 'closeWithoutSale'])->middleware('permission:billing.close_without_sale');
+        Route::post('dining-sessions/{session}/cancel-parcel', [DiningSessionController::class, 'cancelParcel'])->middleware('permission:sessions.open');
         Route::post('dining-sessions/{session}/discount', [DiningSessionController::class, 'discount'])->middleware('permission:billing.discount');
         Route::post('dining-sessions/{session}/invoice', [InvoiceController::class, 'create'])->middleware('permission:billing.create');
         Route::patch('invoices/{invoice}/guest', [InvoiceController::class, 'guest'])->middleware('permission:billing.create');

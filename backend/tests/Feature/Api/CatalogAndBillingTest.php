@@ -155,6 +155,9 @@ class CatalogAndBillingTest extends TestCase
             ->assertJsonPath('data.active_order.items.0.name', 'Soda')
             ->assertJsonPath('data.active_order.total', '40.00');
         $this->assertCount(1, $guestStatus->json('data.active_order.items'));
+        $guestMenu = collect($guestStatus->json('data.menu'))->flatMap(fn ($group) => collect($group['items'])->pluck('name'));
+        $this->assertTrue($guestMenu->contains('Soda'));
+        $this->assertFalse($guestMenu->contains('Cover charge'));
 
         $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/request-bill")->assertOk();
         $invoice = $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/invoice")

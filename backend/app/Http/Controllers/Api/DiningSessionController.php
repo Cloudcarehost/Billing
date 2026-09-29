@@ -126,6 +126,13 @@ class DiningSessionController extends ApiController
         return $this->success($this->session($service->closeWithoutSale($session, $request->user(), $data['reason'], $audit)), 'Table closed without a sale.');
     }
 
+    public function cancelParcel(Request $request, int $session, DiningBillingService $service, AuditService $audit): JsonResponse
+    {
+        $session = $this->sessions($request)->findOrFail($session);
+
+        return $this->success($this->session($service->cancelParcel($session, $request->user(), $audit)), 'Parcel cancelled.');
+    }
+
     public function discount(Request $request, int $session, DiningBillingService $service, AuditService $audit): JsonResponse
     {
         $hotel = $request->attributes->get('currentHotel');

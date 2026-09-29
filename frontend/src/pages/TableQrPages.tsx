@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { BellRing, CheckCircle2, Download, ExternalLink, Printer, QrCode, RefreshCw, ShieldCheck, WifiOff } from 'lucide-react'
+import { BellRing, CheckCircle2, Download, ExternalLink, Printer, QrCode, RefreshCw, ShieldCheck, UtensilsCrossed, WifiOff } from 'lucide-react'
 import QRCode from 'qrcode'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
@@ -78,10 +78,13 @@ export function CustomerTableStatusPage() {
     document.addEventListener('visibilitychange', visible)
     return () => { window.clearTimeout(firstLoad); window.clearInterval(timer); window.removeEventListener('online', online); window.removeEventListener('offline', offlineHandler); document.removeEventListener('visibilitychange', visible) }
   }, [refresh])
+  const [menuCategory, setMenuCategory] = useState('all')
   const currency = status?.currency ?? 'INR'
   const money = (value: string) => new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(Number(value))
   const skipKitchen = status?.order_flow === 'direct_bill'
   const hasReadyItem = !skipKitchen && Boolean(status?.active_order?.items.some((item) => item.status === 'ready'))
+  const menu = status?.menu ?? []
+  const visibleMenu = menuCategory === 'all' ? menu : menu.filter((category) => category.name === menuCategory)
   const callWaiter = async () => {
     if (calling || status?.waiter_called) return
     setCalling(true); setCallError('')
@@ -103,12 +106,21 @@ export function CustomerTableStatusPage() {
   return <main className="customer-status-page"><section className="customer-status-card">
     <header className="customer-brand"><div><p className="eyebrow">LIVE TABLE STATUS</p><h1>{status?.hotel_name ?? 'Restaurant'}</h1><p>{status?.outlet_name}</p></div><div className="customer-table-name"><small>Your table</small><strong>{status?.table_name}</strong></div></header>
     {offline && <div className="customer-offline"><WifiOff size={16} />Offline — showing the last received status</div>}
-    {!status?.active_order ? <div className="customer-empty"><CheckCircle2 size={48} /><h2>No active order</h2><p>This page will update automatically when an order is opened for this table.</p>{callButton}</div> : <>
-      {status.active_order.bill_requested && <div className="customer-bill-requested"><CheckCircle2 size={18} />Bill requested. The counter is preparing it.</div>}
-      <section className="customer-items"><h2>Your order</h2>{status.active_order.items.map((item, index) => <div className={`customer-item ${!skipKitchen && item.status === 'ready' ? 'is-ready' : ''}`} key={`${item.name}-${index}`}><b>{Number(item.quantity)} ×</b><span><strong>{item.name}</strong>{!skipKitchen && <small className={`customer-item-status ${item.status}`}>{statusLabel[item.status] ?? item.status}</small>}{!skipKitchen && item.status === 'ready' && <em className="customer-ready-call-note">Order is ready. If nobody has come to you, call waiter.</em>}</span>{!skipKitchen && item.status === 'ready' && <button type="button" className="button button-secondary customer-item-call" disabled={calling || Boolean(status.waiter_called) || offline} onClick={() => void callWaiter()}><BellRing size={14} />{status.waiter_called ? 'Waiter notified' : 'Call waiter'}</button>}</div>)}</section>
+    {status?.active_order?.bill_requested && <div className="customer-bill-requested"><CheckCircle2 size={18} />Bill requested. The counter is preparing it.</div>}
+    {status?.active_order ? <>
+      <section className="customer-items"><h2>Your order</h2>{status.active_order.items.map((item, index) => <div className={`customer-item ${!skipKitchen && item.status === 'ready' ? 'is-ready' : ''}`} key={`${item.name}-${item.unit_price ?? ''}-${index}`}>
+        <div className="customer-item-copy"><strong>{Number(item.quantity)} × {item.name}</strong><span className="customer-item-meta">{item.unit_price ? `${money(item.unit_price)} each` : 'Ordered'}{!skipKitchen ? ` · ${statusLabel[item.status] ?? item.status}` : ''}</span>{!skipKitchen && item.status === 'ready' && <em className="customer-ready-call-note">Order is ready. If nobody has come to you, call waiter.</em>}</div>
+        <b className="customer-item-total">{item.line_total ? money(item.line_total) : ''}</b>
+        {!skipKitchen && item.status === 'ready' && <button type="button" className="button button-secondary customer-item-call" disabled={calling || Boolean(status.waiter_called) || offline} onClick={() => void callWaiter()}><BellRing size={14} />{status.waiter_called ? 'Waiter notified' : 'Call waiter'}</button>}
+      </div>)}</section>
       <section className="customer-totals"><div><span>Subtotal</span><strong>{money(status.active_order.subtotal)}</strong></div><div><span>Tax</span><strong>{money(status.active_order.tax)}</strong></div><div className="customer-grand-total"><span>Current total</span><strong>{money(status.active_order.total)}</strong></div></section>
-      {callButton}
-    </>}
+    </> : <div className="customer-waiting"><CheckCircle2 size={28} /><div><h2>No active order yet</h2><p>Browse the menu while you wait. This page updates when staff open an order for this table.</p></div></div>}
+    <section className="customer-menu">
+      <div className="customer-menu-heading"><UtensilsCrossed size={18} /><div><h2>Menu</h2><p>View only · Ask a waiter to place an order</p></div></div>
+      {menu.length > 1 && <div className="customer-menu-chips" role="tablist" aria-label="Menu categories"><button type="button" className={menuCategory === 'all' ? 'selected' : ''} onClick={() => setMenuCategory('all')}>All</button>{menu.map((category) => <button type="button" key={category.name} className={menuCategory === category.name ? 'selected' : ''} onClick={() => setMenuCategory(category.name)}>{category.name}</button>)}</div>}
+      {visibleMenu.length ? visibleMenu.map((category) => <div className="customer-menu-group" key={category.name}><h3>{category.name}</h3>{category.items.map((item) => <article className="customer-menu-card" key={`${category.name}-${item.name}`}><div><strong>{item.name}</strong>{item.serving_size ? <small>{item.serving_size}</small> : null}{item.short_description ? <p>{item.short_description}</p> : null}</div><b>{money(item.price)}</b></article>)}</div>) : <p className="customer-menu-empty">Ask staff for today's menu.</p>}
+    </section>
+    {callButton}
     <footer>View only · Refreshes automatically every 10 seconds{status?.last_updated_at ? <small>Last updated {new Date(status.last_updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small> : null}</footer>
   </section></main>
 }

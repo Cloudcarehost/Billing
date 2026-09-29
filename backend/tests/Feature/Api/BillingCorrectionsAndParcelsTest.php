@@ -4,6 +4,7 @@ namespace Tests\Feature\Api;
 
 use App\Models\DiningTable;
 use App\Models\Hotel;
+use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -109,8 +110,60 @@ class BillingCorrectionsAndParcelsTest extends TestCase
             'method' => 'cash',
             'amount' => 90,
         ])->assertOk();
-        $this->actingAs($owner, 'web')->postJson("/api/v1/invoices/{$corrected->json('data.id')}/reopen", ['reason' => 'Too late'])
+        $this->actingAs($owner, 'web')->postJson('/api/v1/invoices/'.$corrected->json('data.id').'/reopen', ['reason' => 'Too late'])
             ->assertUnprocessable();
+    }
+
+    public function test_staff_can_cancel_empty_and_item_filled_parcels_and_reuse_the_slot(): void
+    {
+        [$owner, $hotel] = $this->ownerContext();
+        $outlet = $hotel->outlets()->sole();
+
+        $parcel = $this->actingAs($owner, 'web')->postJson('/api/v1/parcels', ['outlet_id' => $outlet->id])->assertCreated();
+        $parcelId = $parcel->json('data.id');
+        $emptySessionId = $parcel->json('data.active_session.id');
+        $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$emptySessionId}/cancel-parcel")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'closed');
+        $emptyStatus = collect($this->actingAs($owner, 'web')->getJson('/api/v1/tables/status')->json('data'))->firstWhere('id', $parcelId);
+        $this->assertSame('available', $emptyStatus['display_status']);
+        $this->assertNull($emptyStatus['active_session']);
+
+        $reused = $this->actingAs($owner, 'web')->postJson('/api/v1/parcels', ['outlet_id' => $outlet->id])
+            ->assertCreated()
+            ->assertJsonPath('data.id', $parcelId);
+        $filledSessionId = $reused->json('data.active_session.id');
+        $product = Product::query()->create(['hotel_id' => $hotel->id, 'name' => 'Tea', 'selling_price' => 50, 'track_inventory' => false]);
+        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'cancel-parcel-order')->postJson("/api/v1/dining-sessions/{$filledSessionId}/orders", [
+            'items' => [['product_id' => $product->id, 'quantity' => 2]],
+        ])->assertCreated();
+        $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$filledSessionId}/cancel-parcel")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'closed');
+        $this->assertTrue(OrderItem::query()->whereHas('order', fn ($query) => $query->where('dining_session_id', $filledSessionId))->get()->every(fn (OrderItem $item) => $item->status === 'cancelled'));
+        $freeStatus = collect($this->actingAs($owner, 'web')->getJson('/api/v1/tables/status')->json('data'))->firstWhere('id', $parcelId);
+        $this->assertNull($freeStatus['active_session']);
+        $this->actingAs($owner, 'web')->postJson('/api/v1/parcels', ['outlet_id' => $outlet->id])
+            ->assertCreated()
+            ->assertJsonPath('data.id', $parcelId);
+    }
+
+    public function test_parcel_cannot_be_cancelled_after_an_invoice_exists(): void
+    {
+        [$owner, $hotel] = $this->ownerContext();
+        $outlet = $hotel->outlets()->sole();
+        $parcel = $this->actingAs($owner, 'web')->postJson('/api/v1/parcels', ['outlet_id' => $outlet->id])->assertCreated();
+        $sessionId = $parcel->json('data.active_session.id');
+        $product = Product::query()->create(['hotel_id' => $hotel->id, 'name' => 'Tea', 'selling_price' => 50, 'track_inventory' => false]);
+        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'billed-parcel-order')->postJson("/api/v1/dining-sessions/{$sessionId}/orders", [
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ])->assertCreated();
+        $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/request-bill")->assertOk();
+        $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/invoice")->assertCreated();
+
+        $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/cancel-parcel")
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.session.0', 'Void the final bill before cancelling this parcel.');
     }
 
     /** @return array{User, Hotel} */

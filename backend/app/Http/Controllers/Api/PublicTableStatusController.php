@@ -3,11 +3,14 @@
 namespace App\Http\Controllers\Api;
 
 use App\Events\RestaurantUpdated;
+use App\Models\Product;
 use App\Models\TablePublicLink;
 use App\Services\WaiterPushService;
+use App\Support\Quantity;
 use App\Support\RestaurantRealtime;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 
 class PublicTableStatusController extends ApiController
 {
@@ -37,6 +40,7 @@ class PublicTableStatusController extends ApiController
             }
         }
 
+        $menu = $this->guestMenu((int) $table->outlet->hotel_id);
         $data = [
             'hotel_name' => $table->outlet->hotel->name,
             'outlet_name' => $table->outlet->name,
@@ -44,17 +48,13 @@ class PublicTableStatusController extends ApiController
             'currency' => $table->outlet->hotel->currency_code,
             'waiter_called' => $table->waiter_called_at !== null,
             'active_order' => $session ? [
-                'items' => $visibleItems->map(fn ($item) => [
-                    'name' => $item->item_name,
-                    'quantity' => $item->quantity,
-                    'status' => $item->status,
-                    'fulfillment_mode' => $item->fulfillment_mode,
-                ])->values(),
+                'items' => $this->guestItems($visibleItems),
                 'subtotal' => $this->money($visibleItems->sum(fn ($item) => (float) $item->line_subtotal)),
                 'tax' => $this->money($visibleItems->sum(fn ($item) => (float) $item->tax_amount)),
                 'total' => $this->money($visibleItems->sum(fn ($item) => (float) $item->line_total)),
                 'bill_requested' => $session->status === 'pending_bill',
             ] : null,
+            'menu' => $menu,
             'order_flow' => $table->outlet->order_flow,
             'last_updated_at' => $updatedAt->filter()->max()?->toISOString(),
         ];
@@ -102,6 +102,65 @@ class PublicTableStatusController extends ApiController
                 'diningTable.activeSession.orders.items' => fn ($query) => $query->where('status', '!=', 'cancelled')->orderBy('id'),
                 'diningTable.activeSession.orders.items.product.category:id,print_on_bill',
             ])->firstOrFail();
+    }
+
+    private function guestItems(Collection $items): array
+    {
+        $rank = ['pending' => 0, 'preparing' => 1, 'ready' => 2, 'served' => 3];
+
+        return $items
+            ->groupBy(fn ($item) => $item->item_name.'|'.$this->money((float) $item->unit_price))
+            ->map(function (Collection $group) use ($rank) {
+                $first = $group->first();
+                $quantity = $group->reduce(fn (string $carry, $item) => Quantity::add($carry, $item->quantity), '0.000');
+                $status = $group->sortBy(fn ($item) => $rank[$item->status] ?? 99)->first()->status;
+
+                return [
+                    'name' => $first->item_name,
+                    'quantity' => $quantity,
+                    'unit_price' => $this->money((float) $first->unit_price),
+                    'line_total' => $this->money($group->sum(fn ($item) => (float) $item->line_total)),
+                    'status' => $status,
+                    'fulfillment_mode' => $group->contains(fn ($item) => $item->fulfillment_mode === 'kitchen') ? 'kitchen' : $first->fulfillment_mode,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function guestMenu(int $hotelId): array
+    {
+        $products = Product::query()
+            ->where('hotel_id', $hotelId)
+            ->where('is_active', true)
+            ->where(function ($query) {
+                $query->whereNull('category_id')
+                    ->orWhereHas('category', fn ($category) => $category->where('is_active', true)->where('print_on_bill', true));
+            })
+            ->with('category:id,name,sort_order')
+            ->orderBy('name')
+            ->get();
+
+        return $products
+            ->groupBy(fn ($product) => $product->category_id ?? 0)
+            ->map(function (Collection $items) {
+                $category = $items->first()?->category;
+
+                return [
+                    'name' => $category?->name ?? 'Menu',
+                    'sort' => (int) ($category?->sort_order ?? 1_000_000),
+                    'items' => $items->map(fn ($product) => [
+                        'name' => $product->name,
+                        'price' => $this->money((float) $product->selling_price),
+                        'serving_size' => $product->serving_size,
+                        'short_description' => $product->short_description,
+                    ])->values()->all(),
+                ];
+            })
+            ->sortBy(fn (array $group) => sprintf('%06d-%s', $group['sort'], $group['name']))
+            ->map(fn (array $group) => ['name' => $group['name'], 'items' => $group['items']])
+            ->values()
+            ->all();
     }
 
     private function money(float $amount): string

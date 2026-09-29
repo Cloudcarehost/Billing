@@ -303,6 +303,42 @@ class DiningBillingService
         });
     }
 
+    public function cancelParcel(DiningSession $session, User $user, AuditService $audit): DiningSession
+    {
+        return DB::transaction(function () use ($session, $user, $audit) {
+            $session = DiningSession::query()->with(['diningTable', 'orders.items'])->lockForUpdate()->findOrFail($session->id);
+            if (! $session->diningTable?->isParcel()) {
+                $this->invalid('session', 'Only a parcel order can be cancelled this way.');
+            }
+            if (! in_array($session->status, ['occupied', 'pending_bill'], true)) {
+                $this->invalid('session', 'This parcel is no longer open.');
+            }
+            if ($session->invoice()->exists()) {
+                $this->invalid('session', 'Void the final bill before cancelling this parcel.');
+            }
+
+            $itemIds = $session->orders->flatMap->items->where('status', '!=', 'cancelled')->pluck('id');
+            foreach ($itemIds as $itemId) {
+                $this->orders->cancelItem(OrderItem::query()->findOrFail($itemId), 'Parcel cancelled', $user, $this->inventory);
+            }
+
+            $session = DiningSession::query()->lockForUpdate()->findOrFail($session->id);
+            $session->update([
+                'status' => 'closed',
+                'closed_at' => now(),
+                'closed_without_sale_by' => $user->id,
+                'closed_without_sale_reason' => 'Parcel cancelled',
+            ]);
+            $audit->record($session, 'dining_session.parcel_cancelled', $user, $session->hotel_id, $session->outlet_id, [
+                'items_cancelled' => $itemIds->count(),
+            ]);
+            ReportService::invalidateDashboard($session->hotel_id);
+            $this->closeMembers($session, ['reason' => 'parcel_cancelled']);
+
+            return $session->fresh();
+        });
+    }
+
     public function applyDiscount(DiningSession $session, ?float $amount = null, ?float $percent = null): DiningSession
     {
         return DB::transaction(function () use ($session, $amount, $percent) {

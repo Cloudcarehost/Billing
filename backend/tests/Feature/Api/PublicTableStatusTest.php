@@ -36,11 +36,14 @@ class PublicTableStatusTest extends TestCase
             ->assertJsonPath('data.table_name', 'Table 4')
             ->assertJsonPath('data.active_order.items.0.name', 'Sprite')
             ->assertJsonPath('data.active_order.items.0.quantity', '2.000')
+            ->assertJsonPath('data.active_order.items.0.unit_price', '40.00')
+            ->assertJsonPath('data.active_order.items.0.line_total', '80.00')
             ->assertJsonPath('data.active_order.items.0.status', 'ready')
             ->assertJsonMissingPath('data.active_order.items.0.id')
             ->assertJsonMissingPath('data.active_order.items.0.unit_cost')
             ->assertJsonMissingPath('data.active_order.items.0.kitchen_note')
             ->assertJsonMissingPath('data.waiter');
+        $this->assertTrue(collect($response->json('data.menu'))->flatMap(fn ($group) => $group['items'])->contains(fn ($item) => $item['name'] === 'Sprite' && $item['price'] === '40.00'));
 
         $this->withHeader('If-None-Match', $response->headers->get('ETag'))
             ->getJson("/api/v1/public/tables/{$token}/status")->assertStatus(304);
@@ -83,6 +86,58 @@ class PublicTableStatusTest extends TestCase
 
         $this->actingAs($owner, 'web')->postJson("/api/v1/tables/{$tableId}/acknowledge-waiter-call")->assertOk();
         $this->getJson("/api/v1/public/tables/{$token}/status")->assertOk()->assertJsonPath('data.waiter_called', false);
+    }
+
+    public function test_guest_status_combines_split_kitchen_lines_and_exposes_a_view_only_menu(): void
+    {
+        [$owner, $hotel] = $this->ownerContext();
+        $outlet = $hotel->outlets()->sole();
+        $drinks = \App\Models\Category::query()->create(['hotel_id' => $hotel->id, 'name' => 'Drinks', 'slug' => 'drinks']);
+        $internal = \App\Models\Category::query()->create(['hotel_id' => $hotel->id, 'name' => 'Service charge', 'slug' => 'service-charge', 'print_on_bill' => false]);
+        $station = \App\Models\KitchenStation::query()->create(['outlet_id' => $outlet->id, 'name' => 'Bar', 'code' => 'BAR']);
+        Product::query()->create([
+            'hotel_id' => $hotel->id, 'category_id' => $drinks->id, 'kitchen_station_id' => $station->id,
+            'fulfillment_mode' => 'kitchen', 'name' => 'Water Bottle', 'selling_price' => 40,
+            'cost_price' => 10, 'track_inventory' => false, 'serving_size' => '1 bottle',
+        ]);
+        Product::query()->create([
+            'hotel_id' => $hotel->id, 'category_id' => $internal->id, 'name' => 'Cover charge',
+            'selling_price' => 100, 'track_inventory' => false,
+        ]);
+        $tableId = $this->actingAs($owner, 'web')->postJson('/api/v1/tables', [
+            'outlet_id' => $outlet->id, 'name' => 'Table 4', 'code' => 'T4', 'capacity' => 4,
+        ])->assertCreated()->json('data.id');
+        $emptyId = $this->actingAs($owner, 'web')->postJson('/api/v1/tables', [
+            'outlet_id' => $outlet->id, 'name' => 'Table 6', 'code' => 'T6', 'capacity' => 4,
+        ])->assertCreated()->json('data.id');
+        $token = TablePublicLink::query()->where('dining_table_id', $tableId)->sole()->token_encrypted;
+        $emptyToken = TablePublicLink::query()->where('dining_table_id', $emptyId)->sole()->token_encrypted;
+        $water = Product::query()->where('name', 'Water Bottle')->sole();
+        $sessionId = $this->actingAs($owner, 'web')->postJson("/api/v1/tables/{$tableId}/sessions")->assertCreated()->json('data.id');
+        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'guest-water-split')->postJson("/api/v1/dining-sessions/{$sessionId}/orders", [
+            'items' => [['product_id' => $water->id, 'quantity' => 2]],
+        ])->assertCreated();
+
+        $response = $this->getJson("/api/v1/public/tables/{$token}/status")
+            ->assertOk()
+            ->assertJsonPath('data.active_order.items.0.name', 'Water Bottle')
+            ->assertJsonPath('data.active_order.items.0.quantity', '2.000')
+            ->assertJsonPath('data.active_order.items.0.unit_price', '40.00')
+            ->assertJsonPath('data.active_order.items.0.line_total', '80.00')
+            ->assertJsonPath('data.active_order.items.0.status', 'pending');
+        $this->assertCount(1, $response->json('data.active_order.items'));
+        $menuNames = collect($response->json('data.menu'))->flatMap(fn ($group) => collect($group['items'])->pluck('name'));
+        $this->assertTrue($menuNames->contains('Water Bottle'));
+        $this->assertFalse($menuNames->contains('Cover charge'));
+        $this->assertFalse(collect($response->json('data.menu'))->contains(fn ($group) => $group['name'] === 'Service charge'));
+
+        $empty = $this->getJson("/api/v1/public/tables/{$emptyToken}/status")
+            ->assertOk()
+            ->assertJsonPath('data.table_name', 'Table 6')
+            ->assertJsonPath('data.active_order', null);
+        $emptyMenu = collect($empty->json('data.menu'))->flatMap(fn ($group) => collect($group['items'])->pluck('name'));
+        $this->assertTrue($emptyMenu->contains('Water Bottle'));
+        $this->assertFalse($emptyMenu->contains('Cover charge'));
     }
 
     /** @return array{User, Hotel} */
