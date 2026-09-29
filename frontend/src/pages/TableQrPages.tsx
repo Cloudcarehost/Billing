@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { BellRing, CheckCircle2, Download, ExternalLink, Printer, QrCode, RefreshCw, ShieldCheck, UtensilsCrossed, WifiOff } from 'lucide-react'
+import { BellRing, CheckCircle2, Download, ExternalLink, Printer, QrCode, RefreshCw, Search, ShieldCheck, UtensilsCrossed, WifiOff, X } from 'lucide-react'
 import QRCode from 'qrcode'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
@@ -79,12 +79,19 @@ export function CustomerTableStatusPage() {
     return () => { window.clearTimeout(firstLoad); window.clearInterval(timer); window.removeEventListener('online', online); window.removeEventListener('offline', offlineHandler); document.removeEventListener('visibilitychange', visible) }
   }, [refresh])
   const [menuCategory, setMenuCategory] = useState('all')
+  const [menuSearch, setMenuSearch] = useState('')
   const currency = status?.currency ?? 'INR'
   const money = (value: string) => new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(Number(value))
   const skipKitchen = status?.order_flow === 'direct_bill'
   const hasReadyItem = !skipKitchen && Boolean(status?.active_order?.items.some((item) => item.status === 'ready'))
   const menu = status?.menu ?? []
-  const visibleMenu = menuCategory === 'all' ? menu : menu.filter((category) => category.name === menuCategory)
+  const term = menuSearch.trim().toLowerCase()
+  const visibleMenu = (menuCategory === 'all' ? menu : menu.filter((category) => category.name === menuCategory))
+    .map((category) => ({
+      ...category,
+      items: term ? category.items.filter((item) => `${item.name} ${item.serving_size ?? ''} ${item.short_description ?? ''}`.toLowerCase().includes(term)) : category.items,
+    }))
+    .filter((category) => category.items.length)
   const callWaiter = async () => {
     if (calling || status?.waiter_called) return
     setCalling(true); setCallError('')
@@ -117,8 +124,9 @@ export function CustomerTableStatusPage() {
     </> : <div className="customer-waiting"><CheckCircle2 size={28} /><div><h2>No active order yet</h2><p>Browse the menu while you wait. This page updates when staff open an order for this table.</p></div></div>}
     <section className="customer-menu">
       <div className="customer-menu-heading"><UtensilsCrossed size={18} /><div><h2>Menu</h2><p>View only · Ask a waiter to place an order</p></div></div>
+      <label className="customer-menu-search"><Search size={17} /><input value={menuSearch} onChange={(event) => setMenuSearch(event.target.value)} placeholder="Search menu" inputMode="search" autoCapitalize="none" autoCorrect="off" />{menuSearch ? <button type="button" className="search-clear" aria-label="Clear search" onClick={() => setMenuSearch('')}><X size={16} /></button> : null}</label>
       {menu.length > 1 && <div className="customer-menu-chips" role="tablist" aria-label="Menu categories"><button type="button" className={menuCategory === 'all' ? 'selected' : ''} onClick={() => setMenuCategory('all')}>All</button>{menu.map((category) => <button type="button" key={category.name} className={menuCategory === category.name ? 'selected' : ''} onClick={() => setMenuCategory(category.name)}>{category.name}</button>)}</div>}
-      {visibleMenu.length ? visibleMenu.map((category) => <div className="customer-menu-group" key={category.name}><h3>{category.name}</h3>{category.items.map((item) => <article className="customer-menu-card" key={`${category.name}-${item.name}`}><div><strong>{item.name}</strong>{item.serving_size ? <small>{item.serving_size}</small> : null}{item.short_description ? <p>{item.short_description}</p> : null}</div><b>{money(item.price)}</b></article>)}</div>) : <p className="customer-menu-empty">Ask staff for today's menu.</p>}
+      {visibleMenu.length ? visibleMenu.map((category) => <div className="customer-menu-group" key={category.name}><h3>{category.name}</h3>{category.items.map((item) => <article className="customer-menu-card" key={`${category.name}-${item.name}`}><div><strong>{item.name}</strong>{item.serving_size ? <small>{item.serving_size}</small> : null}{item.short_description ? <p>{item.short_description}</p> : null}</div><b>{money(item.price)}</b></article>)}</div>) : <p className="customer-menu-empty">{term ? `No menu items match “${menuSearch.trim()}”.` : 'Ask staff for today\'s menu.'}</p>}
     </section>
     {callButton}
     <footer>View only · Refreshes automatically every 10 seconds{status?.last_updated_at ? <small>Last updated {new Date(status.last_updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small> : null}</footer>

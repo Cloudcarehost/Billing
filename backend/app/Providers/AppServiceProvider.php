@@ -46,6 +46,16 @@ class AppServiceProvider extends ServiceProvider
             ]);
         });
 
+        $frontendHost = parse_url(trim(explode(',', (string) env('FRONTEND_URL', ''))[0]), PHP_URL_HOST);
+        $appHost = parse_url((string) config('app.url'), PHP_URL_HOST);
+        if ($frontendHost && $appHost && strcasecmp((string) $frontendHost, (string) $appHost) !== 0 && str_starts_with((string) config('app.url'), 'https://')) {
+            config([
+                'session.same_site' => 'none',
+                'session.secure' => true,
+                'session.partitioned' => true,
+            ]);
+        }
+
         RateLimiter::for('api', fn (Request $request) => Limit::perMinute(120)->by(
             $request->user()?->id ?: $request->ip(),
         ));

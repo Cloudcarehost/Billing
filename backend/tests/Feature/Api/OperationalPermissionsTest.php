@@ -90,8 +90,10 @@ class OperationalPermissionsTest extends TestCase
         $second = $this->kitchenItem($owner, $hotel, $sessionId, 'second-kitchen-item');
         $this->asUser($owner)->postJson("/api/v1/dining-sessions/{$sessionId}/request-bill")->assertOk();
         $this->asUser($owner)->postJson("/api/v1/order-items/{$second->id}/cancel", ['reason' => 'After bill request'])
-            ->assertUnprocessable();
-        $this->asUser($owner)->postJson("/api/v1/order-items/{$second->id}/kitchen-status", ['status' => 'preparing'])->assertOk();
+            ->assertOk()
+            ->assertJsonPath('data.status', 'cancelled');
+        $third = $this->kitchenItem($owner, $hotel, $sessionId, 'third-kitchen-item');
+        $this->asUser($owner)->postJson("/api/v1/order-items/{$third->id}/kitchen-status", ['status' => 'preparing'])->assertOk();
     }
 
     public function test_kitchen_and_serve_are_blocked_after_an_invoice_exists(): void

@@ -1,9 +1,16 @@
 import axios from 'axios'
 import type { ApiEnvelope } from '../types/api'
 
-export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8000', withCredentials: true, withXSRFToken: true, headers: { Accept: 'application/json' } })
+export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8000', withCredentials: true, withXSRFToken: true, xsrfCookieName: 'XSRF-TOKEN', xsrfHeaderName: 'X-XSRF-TOKEN', headers: { Accept: 'application/json' } })
 api.interceptors.response.use((response) => response, (error: unknown) => {
-  if (axios.isAxiosError(error) && error.response?.status === 401 && !error.config?.url?.includes('/api/v1/login')) { window.sessionStorage.setItem('auth-expired', '1'); window.dispatchEvent(new Event('auth:expired')) }
+  if (axios.isAxiosError(error) && error.response?.status === 401) {
+    const url = error.config?.url ?? ''
+    const restoring = url.includes('/api/v1/me') || url.includes('/api/v1/login') || url.includes('/sanctum/csrf-cookie')
+    if (!restoring) {
+      window.sessionStorage.setItem('auth-expired', '1')
+      window.dispatchEvent(new Event('auth:expired'))
+    }
+  }
   return Promise.reject(error)
 })
 export async function csrfCookie() { await api.get('/sanctum/csrf-cookie') }
