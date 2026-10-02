@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="mr">
+<head>
+<meta charset="utf-8">
+<title>Hotel Aaswad - Menu Page 2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Mukta:wght@500;600;700;800&family=Poppins:wght@500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+  
+  body {
+    width: 1024px;
+    height: 1536px;
+    background-color: #04080c;
+    background-image: 
+      radial-gradient(circle at 50% 20%, rgba(20, 35, 45, 0.6) 0%, transparent 70%),
+      radial-gradient(circle at 50% 80%, rgba(15, 25, 35, 0.7) 0%, transparent 70%),
+      linear-gradient(180deg, #050a0e 0%, #030609 50%, #020406 100%);
+    color: #f7eed8;
+    font-family: 'Poppins', sans-serif;
+    position: relative;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Decorative Outer Frame */
+  .outer-frame {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    border: 2px solid #ca9f42;
+    border-radius: 14px;
+    pointer-events: none;
+    box-shadow: inset 0 0 12px rgba(202, 159, 66, 0.25), 0 0 10px rgba(202, 159, 66, 0.3);
+  }
+  .inner-frame {
+    position: absolute;
+    top: 13px;
+    left: 13px;
+    right: 13px;
+    bottom: 13px;
+    border: 1px solid rgba(202, 159, 66, 0.45);
+    border-radius: 10px;
+    pointer-events: none;
+  }
+
+  /* Header */
+  .header-banner {
+    width: 100%;
+    height: 165px;
+    position: relative;
+    z-index: 10;
+  }
+  .header-img {
+    width: 1024px;
+    height: 165px;
+    display: block;
+    object-fit: cover;
+  }
+
+  /* Main Two-Column Layout */
+  .main-content {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 18px 0 18px;
+    gap: 14px;
+    position: relative;
+    z-index: 5;
+    height: calc(1536px - 165px - 65px);
+  }
+
+  .column {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Section Card Styling */
+  .section-card {
+    border: 1.5px solid #ca9f42;
+    border-radius: 12px;
+    background: rgba(6, 12, 16, 0.85);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.6), inset 0 0 15px rgba(202, 159, 66, 0.08);
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Section Header Badge */
+  .badge-container {
+    position: relative;
+    height: 44px;
+    background: #060b0f;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+    border-bottom: 1px solid rgba(202, 159, 66, 0.3);
+    overflow: hidden;
+  }
+  .section-badge-img {
+    height: 100%;
+    width: 100%;
+    object-fit: fill;
+    display: block;
+  }
+
+  /* Custom Soup Badge */
+  .soup-badge-container {
+    height: 44px;
+    background: #060b0f;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+    border-bottom: 1px solid rgba(202, 159, 66, 0.3);
+    display: flex;
+    align-items: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .soup-brush-bar {
+    position: absolute;
+    left: 20px;
+    top: 5px;
+    bottom: 5px;
+    width: 280px;
+    background: #fabc41;
+    border-top-left-radius: 16px;
+    border-bottom-left-radius: 16px;
+    z-index: 1;
+  }
+  .soup-brush-tail {
+    position: absolute;
+    left: 298px;
+    top: 5px;
+    height: 34px;
+    width: 80px;
+    object-fit: cover;
+    z-index: 1;
+  }
+  .soup-badge-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #050a0e;
+    border: 2px solid #ca9f42;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    z-index: 3;
+    margin-left: 10px;
+    flex-shrink: 0;
+  }
+  .soup-badge-icon svg {
+    width: 22px;
+    height: 22px;
+    fill: #f5b335;
+  }
+  .soup-badge-text {
+    position: relative;
+    z-index: 3;
+    margin-left: 14px;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    color: #000;
+  }
+  .soup-badge-text .title-en {
+    font-size: 19px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+  }
+  .soup-badge-text .title-mr {
+    font-family: 'Mukta', 'Noto Sans Devanagari', sans-serif;
+    font-size: 20px;
+    font-weight: 800;
+  }
+
+  /* Menu Item Table */
+  .menu-table {
+    width: 100%;
+    padding: 6px 12px 6px 12px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .menu-row {
+    display: flex;
+    align-items: baseline;
+    line-height: 1.35;
+    border-bottom: 1px dashed rgba(202, 159, 66, 0.12);
+    white-space: nowrap;
+  }
+  .menu-row:last-child {
+    border-bottom: none;
+  }
+
+  .item-num {
+    width: 26px;
+    font-size: 17px;
+    font-weight: 700;
+    color: #e5b842;
+    flex-shrink: 0;
+    text-align: left;
+  }
+
+  .item-name-en {
+    flex: 1.25;
+    font-size: 17px;
+    font-weight: 600;
+    color: #f8f1e0;
+    letter-spacing: 0.2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .item-name-mr {
+    flex: 1.15;
+    font-family: 'Mukta', 'Noto Sans Devanagari', sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    color: #f1dfb8;
+    padding-left: 6px;
+    letter-spacing: 0.3px;
+  }
+
+  .item-price {
+    min-width: 60px;
+    font-size: 18px;
+    font-weight: 700;
+    color: #ffd875;
+    text-align: right;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  /* Left Column Specifics */
+  .left-column {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    height: 100%;
+  }
+
+  .main-veg-card {
+    flex: 2.3;
+    display: flex;
+    flex-direction: column;
+  }
+  .main-veg-card .menu-table {
+    flex: 1;
+    justify-content: space-between;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  .main-veg-card .menu-row {
+    padding: 3.5px 0;
+  }
+
+  .roti-card {
+    flex: 1.15;
+    display: flex;
+    flex-direction: column;
+  }
+  .roti-card .menu-table {
+    padding-top: 4px;
+    padding-bottom: 2px;
+  }
+  .roti-card .menu-row {
+    padding: 3px 0;
+  }
+  .roti-dish-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 4px 0 6px 0;
+    flex: 1;
+  }
+  .roti-bottom-dish {
+    height: 85px;
+    width: auto;
+    object-fit: contain;
+    filter: drop-shadow(0 4px 10px rgba(0,0,0,0.8));
+  }
+
+  /* Right Column Specifics */
+  .right-column {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    height: 100%;
+  }
+
+  .main-nonveg-card {
+    flex: 1.1;
+    display: flex;
+    flex-direction: column;
+  }
+  .main-nonveg-card .menu-table {
+    flex: 1;
+    justify-content: space-around;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  .main-nonveg-card .menu-row {
+    padding: 3px 0;
+  }
+  .main-nonveg-card .item-price {
+    min-width: 90px;
+  }
+
+  .rice-card {
+    flex: 1.45;
+    display: flex;
+    flex-direction: column;
+  }
+  .rice-card .menu-table {
+    flex: 1;
+    justify-content: space-around;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  .rice-card .menu-row {
+    padding: 2.5px 0;
+  }
+  .rice-card .item-price {
+    min-width: 85px;
+  }
+
+  /* Soup Section Card */
+  .soup-card {
+    flex: 0.85;
+    display: flex;
+    flex-direction: column;
+  }
+  .soup-card .menu-table {
+    flex: 1;
+    justify-content: space-around;
+    padding-top: 6px;
+    padding-bottom: 8px;
+  }
+  .soup-card .menu-row {
+    padding: 6px 0;
+  }
+  .soup-reserved-spacing {
+    height: 28px;
+  }
+
+  /* Special 1 KG Box Card */
+  .special-kg-card {
+    border: 2px solid #ca9f42;
+    border-radius: 12px;
+    background: radial-gradient(circle at 60% 40%, #58080f 0%, #3e0409 60%, #250205 100%);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.7), inset 0 0 15px rgba(202, 159, 66, 0.2);
+    position: relative;
+    padding: 8px 12px 10px 14px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    flex: 1.4;
+    overflow: hidden;
+  }
+  .special-top-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1.5px solid #ca9f42;
+    padding-bottom: 5px;
+  }
+  .special-animals-img {
+    height: 30px;
+    width: auto;
+    object-fit: contain;
+  }
+  .special-title {
+    font-size: 19px;
+    font-weight: 800;
+    color: #f7c55c;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .special-title-mr {
+    font-family: 'Mukta', 'Noto Sans Devanagari', sans-serif;
+    font-size: 19px;
+    font-weight: 800;
+    color: #f7c55c;
+  }
+
+  .special-body {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 4px;
+  }
+  .special-text-col {
+    flex: 1;
+    font-family: 'Mukta', 'Noto Sans Devanagari', sans-serif;
+    color: #fff;
+    line-height: 1.35;
+  }
+  .special-line-1 {
+    font-size: 17.5px;
+    font-weight: 700;
+    color: #fce8b8;
+  }
+  .special-line-2 {
+    font-size: 17.5px;
+    font-weight: 700;
+    color: #ffffff;
+  }
+  .special-rates-box {
+    margin: 3px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .special-rate-item {
+    font-size: 17px;
+    font-weight: 800;
+    color: #ffd875;
+  }
+  .special-line-3 {
+    font-size: 16.5px;
+    font-weight: 600;
+    color: #f7eed8;
+  }
+  .special-line-time {
+    font-size: 15.5px;
+    font-weight: 600;
+    color: #f4d078;
+    margin-top: 2px;
+  }
+
+  .special-side-dish {
+    width: 110px;
+    height: 110px;
+    object-fit: contain;
+    filter: drop-shadow(0 4px 12px rgba(0,0,0,0.9));
+    flex-shrink: 0;
+  }
+
+  /* Bottom leaves ornament */
+  .footer-banner {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 1024px;
+    height: 65px;
+    z-index: 10;
+    pointer-events: none;
+  }
+  .footer-img {
+    width: 1024px;
+    height: 65px;
+    display: block;
+    object-fit: cover;
+  }
+</style>
+</head>
+<body>
+
+<div class="outer-frame"></div>
+<div class="inner-frame"></div>
+
+<!-- Top Branding Header -->
+<div class="header-banner">
+  <img src="assets/header.png" class="header-img" alt="Hotel Aaswad Header">
+</div>
+
+<!-- Main Content Columns -->
+<div class="main-content">
+  
+  <!-- LEFT COLUMN: MAIN COURSE - VEG (19) + ROTI (6) -->
+  <div class="column left-column">
+    
+    <!-- MAIN COURSE - VEG (19 items) -->
+    <div class="section-card main-veg-card">
+      <div class="badge-container">
+        <img src="assets/badge_main_veg.png" class="section-badge-img" alt="Main Course Veg">
+      </div>
+      
+      <div class="menu-table">
+        <div class="menu-row">
+          <span class="item-num">1</span>
+          <span class="item-name-en">Paneer Masala</span>
+          <span class="item-name-mr">पनीर मसाला</span>
+          <span class="item-price">180</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">2</span>
+          <span class="item-name-en">Shahi Paneer</span>
+          <span class="item-name-mr">शाही पनीर</span>
+          <span class="item-price">200</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">3</span>
+          <span class="item-name-en">Paneer Tikka Masala</span>
+          <span class="item-name-mr">पनीर टिक्का मसाला</span>
+          <span class="item-price">180</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">4</span>
+          <span class="item-name-en">Kaju Paneer</span>
+          <span class="item-name-mr">काजू पनीर</span>
+          <span class="item-price">200</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">5</span>
+          <span class="item-name-en">Matar Paneer</span>
+          <span class="item-name-mr">मटर पनीर</span>
+          <span class="item-price">200</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">6</span>
+          <span class="item-name-en">Brinjal Masala</span>
+          <span class="item-name-mr">वांगी मसाला</span>
+          <span class="item-price">140</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">7</span>
+          <span class="item-name-en">Bhendi</span>
+          <span class="item-name-mr">भेंडी</span>
+          <span class="item-price">140</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">8</span>
+          <span class="item-name-en">Matki</span>
+          <span class="item-name-mr">मटकी</span>
+          <span class="item-price">140</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">9</span>
+          <span class="item-name-en">Soyabean Masala</span>
+          <span class="item-name-mr">सोयाबीन मसाला</span>
+          <span class="item-price">140</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">10</span>
+          <span class="item-name-en">Shev Bhaji</span>
+          <span class="item-name-mr">शेव भाजी</span>
+          <span class="item-price">120</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">11</span>
+          <span class="item-name-en">Butter Shev Bhaji</span>
+          <span class="item-name-mr">बटर शेव भाजी</span>
+          <span class="item-price">140</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">12</span>
+          <span class="item-name-en">Dudh Shev Bhaji</span>
+          <span class="item-name-mr">दूध शेव भाजी</span>
+          <span class="item-price">170</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">13</span>
+          <span class="item-name-en">Shev Tamatar</span>
+          <span class="item-name-mr">शेव टमाटर</span>
+          <span class="item-price">120</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">14</span>
+          <span class="item-name-en">Pithla Bhakar</span>
+          <span class="item-name-mr">पिठलं भाकर</span>
+          <span class="item-price">150</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">15</span>
+          <span class="item-name-en">Tadka Pithla Bhakar</span>
+          <span class="item-name-mr">तडका पिठलं भाकर</span>
+          <span class="item-price">160</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">16</span>
+          <span class="item-name-en">Dal Fry</span>
+          <span class="item-name-mr">डाळ फ्राय</span>
+          <span class="item-price">120</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">17</span>
+          <span class="item-name-en">Dal Tadka</span>
+          <span class="item-name-mr">डाळ तडका</span>
+          <span class="item-price">150</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">18</span>
+          <span class="item-name-en">Paneer Bhurji</span>
+          <span class="item-name-mr">पनीर भुर्जी</span>
+          <span class="item-price">150</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">19</span>
+          <span class="item-name-en">Butter Dal Tadka</span>
+          <span class="item-name-mr">बटर डाळ तडका</span>
+          <span class="item-price">160</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ROTI (6 items) -->
+    <div class="section-card roti-card">
+      <div class="badge-container">
+        <img src="assets/badge_roti.png" class="section-badge-img" alt="Roti">
+      </div>
+      
+      <div class="menu-table">
+        <div class="menu-row">
+          <span class="item-num">1</span>
+          <span class="item-name-en">Chapati</span>
+          <span class="item-name-mr">चपाती</span>
+          <span class="item-price">20</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">2</span>
+          <span class="item-name-en">Bhakri</span>
+          <span class="item-name-mr">भाकरी</span>
+          <span class="item-price">30</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">3</span>
+          <span class="item-name-en">Butter Chapati</span>
+          <span class="item-name-mr">बटर चपाती</span>
+          <span class="item-price">30</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">4</span>
+          <span class="item-name-en">Butter Bhakri</span>
+          <span class="item-name-mr">बटर भाकरी</span>
+          <span class="item-price">40</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">5</span>
+          <span class="item-name-en">Tandoor Roti</span>
+          <span class="item-name-mr">तंदूर रोटी</span>
+          <span class="item-price">25</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">6</span>
+          <span class="item-name-en">Butter Tandoor Roti</span>
+          <span class="item-name-mr">बटर तंदूर रोटी</span>
+          <span class="item-price">35</span>
+        </div>
+      </div>
+
+      <div class="roti-dish-row">
+        <img src="assets/dish_roti_transparent.png" class="roti-bottom-dish" alt="Roti Basket">
+      </div>
+    </div>
+
+  </div>
+
+  <!-- RIGHT COLUMN: MAIN COURSE - NON-VEG (7) + RICE (10) + SOUP (2) + SPECIAL (1 KG) -->
+  <div class="column right-column">
+    
+    <!-- MAIN COURSE - NON VEG (7 items) -->
+    <div class="section-card main-nonveg-card">
+      <div class="badge-container">
+        <img src="assets/badge_main_nonveg.png" class="section-badge-img" alt="Main Course Non-Veg">
+      </div>
+      
+      <div class="menu-table">
+        <div class="menu-row">
+          <span class="item-num">1</span>
+          <span class="item-name-en">Chicken Handi</span>
+          <span class="item-name-mr">चिकन हंडी</span>
+          <span class="item-price">500 / 300</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">2</span>
+          <span class="item-name-en">Chicken Masala</span>
+          <span class="item-name-mr">चिकन मसाला</span>
+          <span class="item-price">180</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">3</span>
+          <span class="item-name-en">Butter Chicken</span>
+          <span class="item-name-mr">बटर चिकन</span>
+          <span class="item-price">250</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">4</span>
+          <span class="item-name-en">Mutton Handi</span>
+          <span class="item-name-mr">मटण हंडी</span>
+          <span class="item-price">750 / 400</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">5</span>
+          <span class="item-name-en">Mutton Masala</span>
+          <span class="item-name-mr">मटण मसाला</span>
+          <span class="item-price">180</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">6</span>
+          <span class="item-name-en">Fish Curry</span>
+          <span class="item-name-mr">मच्छी करी</span>
+          <span class="item-price">180</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">7</span>
+          <span class="item-name-en">Egg Curry</span>
+          <span class="item-name-mr">अंडा करी</span>
+          <span class="item-price">120</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RICE (10 items) -->
+    <div class="section-card rice-card">
+      <div class="badge-container">
+        <img src="assets/badge_rice.png" class="section-badge-img" alt="Rice">
+      </div>
+      
+      <div class="menu-table">
+        <div class="menu-row">
+          <span class="item-num">1</span>
+          <span class="item-name-en">Rice</span>
+          <span class="item-name-mr">राईस</span>
+          <span class="item-price">120 / 60</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">2</span>
+          <span class="item-name-en">Jeera Rice</span>
+          <span class="item-name-mr">जीरा राईस</span>
+          <span class="item-price">140 / 70</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">3</span>
+          <span class="item-name-en">Butter Dal Khichdi</span>
+          <span class="item-name-mr">बटर डाळ खिचडी</span>
+          <span class="item-price">170</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">4</span>
+          <span class="item-name-en">Dal Khichdi</span>
+          <span class="item-name-mr">डाळ खिचडी</span>
+          <span class="item-price">150</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">5</span>
+          <span class="item-name-en">Tadka Dal Khichdi</span>
+          <span class="item-name-mr">तडका डाळ खिचडी</span>
+          <span class="item-price">160</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">6</span>
+          <span class="item-name-en">Paneer Pulao</span>
+          <span class="item-name-mr">पनीर पुलाव</span>
+          <span class="item-price">175</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">7</span>
+          <span class="item-name-en">Chicken Biryani</span>
+          <span class="item-name-mr">चिकन बिर्याणी</span>
+          <span class="item-price">190</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">8</span>
+          <span class="item-name-en">Chicken Pulao</span>
+          <span class="item-name-mr">चिकन पुलाव</span>
+          <span class="item-price">170</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">9</span>
+          <span class="item-name-en">Paneer Pulao</span>
+          <span class="item-name-mr">पनीर पुलाव</span>
+          <span class="item-price">175</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">10</span>
+          <span class="item-name-en">Masala Rice</span>
+          <span class="item-name-mr">मसाला राईस</span>
+          <span class="item-price">160</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- SOUP SECTION (2 items + reserved room) -->
+    <div class="section-card soup-card">
+      <div class="soup-badge-container">
+        <div class="soup-brush-bar"></div>
+        <img src="assets/banner_tail.png" class="soup-brush-tail" alt="">
+        <div class="soup-badge-icon">
+          <svg viewBox="0 0 24 24">
+            <path d="M21 16v-2c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v2c0 3.31 2.69 6 6 6h6c3.31 0 6-2.69 6-6zm-1.5 0c0 2.48-2.02 4.5-4.5 4.5h-6c-2.48 0-4.5-2.02-4.5-4.5v-1.5h15V16zM6 8c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm5 0c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm5 0c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2z"/>
+          </svg>
+        </div>
+        <div class="soup-badge-text">
+          <span class="title-en">SOUP</span>
+          <span class="title-mr">सूप</span>
+        </div>
+      </div>
+      
+      <div class="menu-table">
+        <div class="menu-row">
+          <span class="item-num">1</span>
+          <span class="item-name-en">Chicken Soup</span>
+          <span class="item-name-mr">चिकन सूप</span>
+          <span class="item-price">80</span>
+        </div>
+        <div class="menu-row">
+          <span class="item-num">2</span>
+          <span class="item-name-en">Mutton Soup</span>
+          <span class="item-name-mr">मटण सूप</span>
+          <span class="item-price">120</span>
+        </div>
+      </div>
+      
+      <!-- Reserved Space for 2 more items as requested -->
+      <div class="soup-reserved-spacing"></div>
+    </div>
+
+    <!-- SPECIAL (1 KG) -->
+    <div class="special-kg-card">
+      <div class="special-top-row">
+        <img src="assets/special_animals.png" class="special-animals-img" alt="Chicken, Goat, Fish Icons">
+        <div class="special-title">
+          <span>SPECIAL (1 KG)</span>
+          <span class="special-title-mr">स्पेशल (1 किलो)</span>
+        </div>
+      </div>
+      
+      <div class="special-body">
+        <div class="special-text-col">
+          <div class="special-line-1">आमच्याकडे</div>
+          <div class="special-line-2">चिकन, मटन, मासे</div>
+          <div class="special-rates-box">
+            <div class="special-rate-item">चिकन एक किलो - 400 / 250</div>
+            <div class="special-rate-item">मटण एक किलो - 450 / 300</div>
+          </div>
+          <div class="special-line-3">प्रमाणे बनवून मिळतील.</div>
+          <div class="special-line-time">ऑर्डर दिल्यानंतर 20-25 मि. नंतर ऑर्डर मिळेल.</div>
+        </div>
+        <img src="assets/dish_spec_transparent.png" class="special-side-dish" alt="Special Dish Platter">
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Bottom Foliage Footer -->
+<div class="footer-banner">
+  <img src="assets/footer_ornament.png" class="footer-img" alt="Footer Foliage">
+</div>
+
+</body>
+</html>

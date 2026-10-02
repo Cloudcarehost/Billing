@@ -2,13 +2,14 @@ import { CircleDollarSign, History, Plus, ReceiptText, Undo2, X } from 'lucide-r
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { InvoiceReceiptPanel } from '../components/InvoiceReceiptPanel'
-import { Modal, PromptDialog, Toast } from '../components/ui/Feedback'
+import { Modal, Toast } from '../components/ui/Feedback'
 import { useAuth } from '../features/auth/AuthContext'
 import { can, canCancelItem } from '../features/auth/permissions'
-import { useRestaurantRealtime } from '../features/realtime/useRestaurantRealtime'
+import { idempotencyHeaders, useRestaurantRealtime } from '../features/realtime/useRestaurantRealtime'
 import { api, errorMessage } from '../lib/api'
 import type { ApiEnvelope, DiningSession, DiningTable, Invoice, OrderItem } from '../types/api'
-import { printThermalReceipt, printsOnCustomerBill } from '../lib/thermalReceipt'
+import { groupBillLines, qtyLabel, statusSummary, takeExcludeUnits, type BillLineGroup } from '../lib/billLines'
+import { openThermalReceiptWindow, printThermalReceipt, printsOnCustomerBill, writeThermalReceipt } from '../lib/thermalReceipt'
 import { ConnectionState, isParcelTable, isPrimaryMergedTable, mergedTableLabel, money, readable, sessionCanTakeOrders, sessionDisplayName, unwrap, useOperationalRefresh, value } from './opsShared'
 import { applyTableEvent } from '../features/realtime/applyRestaurantEvent'
 
@@ -25,7 +26,7 @@ export function BillingPage() {
   const [chargedToUserId, setChargedToUserId] = useState('')
   const [closeWithoutSaleOpen, setCloseWithoutSaleOpen] = useState(false)
   const [closeWithoutSaleReason, setCloseWithoutSaleReason] = useState('')
-  const [cancelTarget, setCancelTarget] = useState<OrderItem | null>(null)
+  const [excludeTarget, setExcludeTarget] = useState<{ group: BillLineGroup<OrderItem>; quantity: string; reason: string } | null>(null)
   const [guest, setGuest] = useState({ customer_name: '', customer_phone: '', customer_email: '', customer_gstin: '' })
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
@@ -115,25 +116,61 @@ export function BillingPage() {
       setNotice('Discount applied to the session.')
     } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) }
   }
-  const createInvoice = async () => { if (!selectedSession || busy) return; setBusy(true); try { const created = unwrap(await api.post<ApiEnvelope<Invoice>>(`/api/v1/dining-sessions/${selectedSession.id}/invoice`, guestPayload())); setInvoice(created); setNotice(`Invoice ${created.invoice_number} created.`); printReceipt(created, false) } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) } }
-  const requestBill = async () => { if (!selectedSession || busy) return; setBusy(true); try { const updated = unwrap(await api.post<ApiEnvelope<DiningSession>>(`/api/v1/dining-sessions/${selectedSession.id}/request-bill`)); setSelectedSession(updated); setNotice('Ready to apply discount and create the bill.') } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) } }
-  const cancelLine = async (reason: string) => {
-    const item = cancelTarget
-    if (!item) return
+  const createInvoice = async () => {
+    if (!selectedSession || busy) return
+    const popup = openThermalReceiptWindow()
     setBusy(true)
     try {
-      await api.post(`/api/v1/order-items/${item.id}/cancel`, { reason })
-      setCancelTarget(null)
+      const created = unwrap(await api.post<ApiEnvelope<Invoice>>(`/api/v1/dining-sessions/${selectedSession.id}/invoice`, guestPayload()))
+      setInvoice(created)
+      if (popup) {
+        printReceipt(created, false, popup)
+      } else {
+        setNotice(`Invoice ${created.invoice_number} created.`)
+        setError('Printing was blocked by the browser. Allow pop-ups and try again.')
+      }
+    } catch (requestError) {
+      popup?.close()
+      setError(errorMessage(requestError))
+    } finally { setBusy(false) }
+  }
+  const requestBill = async () => { if (!selectedSession || busy) return; setBusy(true); try { const updated = unwrap(await api.post<ApiEnvelope<DiningSession>>(`/api/v1/dining-sessions/${selectedSession.id}/request-bill`)); setSelectedSession(updated); setNotice('Ready to apply discount and create the bill.') } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) } }
+  const cancelLine = async () => {
+    if (!excludeTarget || excludeTarget.reason.trim().length < 3) return
+    const qty = value(excludeTarget.quantity)
+    const cancellable = excludeTarget.group.items.filter((item) => canCancelItem(session, item))
+    const units = takeExcludeUnits(cancellable, qty)
+    if (qty <= 0 || units.reduce((sum, unit) => sum + unit.quantity, 0) < qty) {
+      setError('You can only exclude a quantity you are allowed to cancel.')
+      return
+    }
+    setBusy(true)
+    try {
+      for (const unit of units) {
+        const whole = Math.abs(unit.quantity - Number(unit.item.quantity)) < 0.0005
+        await api.post(`/api/v1/order-items/${unit.item.id}/cancel`, whole ? { reason: excludeTarget.reason.trim() } : { reason: excludeTarget.reason.trim(), quantity: unit.quantity })
+      }
+      setExcludeTarget(null)
       if (selectedSession) await loadSelected(selectedSession.id)
       await loadTables()
-      setNotice(`${item.item_name} removed from this bill.`)
+      setNotice(`${qtyLabel(qty)} × ${excludeTarget.group.item_name} removed from this bill.`)
+    } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) }
+  }
+  const addUnit = async (group: BillLineGroup<OrderItem>) => {
+    if (!selectedSession || !group.product_id || busy || !can(session, 'orders.create')) return
+    setBusy(true)
+    try {
+      const updated = unwrap(await api.post<ApiEnvelope<DiningSession>>(`/api/v1/dining-sessions/${selectedSession.id}/orders`, { items: [{ product_id: group.product_id, quantity: 1 }] }, { headers: idempotencyHeaders() }))
+      setSelectedSession(updated)
+      await loadTables()
+      setNotice(`Added 1 × ${group.item_name}.`)
     } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) }
   }
   const closeWithoutSale = async () => { if (!selectedSession || busy || closeWithoutSaleReason.trim().length < 3) return; setBusy(true); setError(''); try { await api.post(`/api/v1/dining-sessions/${selectedSession.id}/close-without-sale`, { reason: closeWithoutSaleReason.trim() }); setCloseWithoutSaleOpen(false); setCloseWithoutSaleReason(''); setSelectedSession(null); setInvoice(null); await loadTables(); setNotice('Zero-value session closed without a sale. The reason was added to the audit log.') } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) } }
-  const printReceipt = (bill: Invoice, duplicate: boolean) => {
-    if (!session) return
+  const printReceipt = (bill: Invoice, duplicate: boolean, popup?: Window) => {
+    if (!session) { popup?.close(); return }
     const items = (bill.items?.length ? bill.items : selectedSession?.orders.flatMap((order) => order.items).filter((item) => item.status !== 'cancelled')) ?? []
-    const printed = printThermalReceipt({
+    const input = {
       hotel: session.hotel,
       outlet: session.outlets.find((outlet) => outlet.id === activeOutletId) ?? session.outlets[0],
       cashier: session.user.name,
@@ -142,15 +179,16 @@ export function BillingPage() {
       invoice: bill,
       items,
       duplicate,
-    })
-    if (!printed) setError('The print dialog could not be opened. Try Print again.')
-    else setNotice(duplicate ? 'Duplicate receipt sent to the printer.' : 'Bill sent to the printer.')
+    }
+    const printed = popup ? (writeThermalReceipt(popup, input), true) : printThermalReceipt(input)
+    if (!printed) setError('Printing was blocked by the browser. Allow pop-ups and try again.')
+    else { setError(''); setNotice(duplicate ? 'Duplicate receipt sent to the printer.' : 'Bill sent to the printer.') }
   }
   const openForItems = Boolean(selectedSession) && sessionCanTakeOrders(selectedSession) && !billed
   const billItems = !selectedSession || billed ? [] : (selectedSession.orders ?? []).flatMap((order) => order.items).filter((item) => item.status !== 'cancelled')
-  const customerItems = billItems.filter(printsOnCustomerBill)
-  const internalItems = billItems.filter((item) => !printsOnCustomerBill(item))
-  const sectionTotal = (items: typeof billItems) => items.reduce((sum, item) => sum + value(item.line_total), 0)
+  const customerItems = groupBillLines(billItems.filter(printsOnCustomerBill))
+  const internalItems = groupBillLines(billItems.filter((item) => !printsOnCustomerBill(item)))
+  const sectionTotal = (items: typeof customerItems) => items.reduce((sum, item) => sum + item.line_total, 0)
   const changeDiscountPercent = (raw: string) => {
     lastDiscountField.current = 'percent'
     setDiscountPercent(raw)
@@ -171,7 +209,20 @@ export function BillingPage() {
     }
     setDiscountPercent(((amount / billBase) * 100).toFixed(2))
   }
-  const renderBillLine = (item: (typeof billItems)[number]) => <div className="invoice-line" key={item.id}><span>{item.quantity} × {item.item_name}<small>{item.status ? readable(item.status) : ''}</small></span><strong>{money(item.line_total, session?.hotel.currency_code)}</strong>{openForItems && canCancelItem(session, item) && <button type="button" className="text-danger" onClick={() => setCancelTarget(item)}><X size={14} />Exclude</button>}</div>
+  const renderBillLine = (group: BillLineGroup<OrderItem>) => {
+    const canExclude = openForItems && group.items.some((item) => canCancelItem(session, item))
+    const canAdd = openForItems && Boolean(group.product_id) && can(session, 'orders.create')
+    return <div className="invoice-line bill-qty-line" key={group.key}>
+      <span>{group.item_name}{group.statuses.length ? <small>{statusSummary(group)}</small> : null}</span>
+      <b>{qtyLabel(group.quantity)}</b>
+      <span>{money(group.unit_price, session?.hotel.currency_code)}</span>
+      <strong>{money(group.line_total, session?.hotel.currency_code)}</strong>
+      {(canExclude || canAdd) && <span className="bill-line-actions">
+        {canExclude && <button type="button" className="text-danger" title={`Exclude ${group.item_name}`} onClick={() => setExcludeTarget({ group, quantity: '1', reason: '' })}><X size={15} /></button>}
+        {canAdd && <button type="button" className="text-add" title={`Add ${group.item_name}`} onClick={() => void addUnit(group)}><Plus size={15} /></button>}
+      </span>}
+    </div>
+  }
   const selectedTable = tables.find((table) => table.active_session?.id === selectedSession?.id)
   return <section className="billing-page">
     <div className="page-heading"><div><p className="eyebrow">COUNTER BILLING</p><h1>Settle table bills</h1><p>Create the final bill, take split payments, and retain corrections safely.</p></div><div className="heading-actions"><Link className="button button-secondary" to="/app/billing/history"><History size={15} />Previous bills</Link><ConnectionState status={status} /></div></div>
@@ -181,12 +232,14 @@ export function BillingPage() {
         <div className="invoice-lines">
           <div className="bill-line-section">
             {internalItems.length > 0 && customerItems.length > 0 && <h3>Customer bill</h3>}
+            {customerItems.length > 0 && <div className="bill-qty-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amt</span><span></span></div>}
             {customerItems.map(renderBillLine)}
             {customerItems.length > 0 && <div className="bill-line-subtotal"><span>Items total</span><strong>{money(sectionTotal(customerItems), session?.hotel.currency_code)}</strong></div>}
             {!customerItems.length && !internalItems.length && <p className="bill-empty-lines">No items on this bill yet.</p>}
           </div>
           {internalItems.length > 0 && <div className="bill-line-section internal-bill-section">
             <h3>Not on customer bill</h3>
+            <div className="bill-qty-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amt</span><span></span></div>
             {internalItems.map(renderBillLine)}
             <div className="bill-line-subtotal"><span>Internal total</span><strong>{money(sectionTotal(internalItems), session?.hotel.currency_code)}</strong></div>
           </div>}
@@ -199,7 +252,7 @@ export function BillingPage() {
         {value(selectedSession.total_amount) === 0 ? can(session, 'billing.close_without_sale') ? <button type="button" className="button button-secondary button-full close-without-sale" disabled={busy || selectedSession.status !== 'pending_bill'} onClick={() => setCloseWithoutSaleOpen(true)}><Undo2 size={16} />{selectedSession.status === 'pending_bill' ? 'Close without sale' : 'Request bill first'}</button> : <p className="zero-sale-message">This zero-value session requires an authorized user to close it without a sale.</p> : <button type="button" className="button button-primary button-full" disabled={busy || selectedSession.status !== 'pending_bill'} onClick={() => void createInvoice()}><ReceiptText size={16} />{busy ? 'Creating…' : 'Create final bill'}</button>}
       </>}</main></div>
     <Modal open={closeWithoutSaleOpen} title="Close without sale" onClose={() => !busy && setCloseWithoutSaleOpen(false)}><p className="modal-intro">No invoice will be created. The table will become available and this reason will remain in the audit log.</p><label className="field"><span>Required reason</span><textarea rows={4} maxLength={1000} value={closeWithoutSaleReason} onChange={(event) => setCloseWithoutSaleReason(event.target.value)} placeholder="For example: all items cancelled before preparation" /></label><div className="form-action-row"><button type="button" className="button button-secondary" disabled={busy} onClick={() => setCloseWithoutSaleOpen(false)}>Cancel</button><button type="button" className="button button-primary" disabled={busy || closeWithoutSaleReason.trim().length < 3} onClick={() => void closeWithoutSale()}>{busy ? 'Closing…' : 'Close table'}</button></div></Modal>
-    <PromptDialog open={Boolean(cancelTarget)} title={`Exclude ${cancelTarget?.item_name ?? 'item'}?`} description="The item stays in history as cancelled. Recreate the bill after you finish corrections." label="Required reason" type="textarea" minLength={3} confirmLabel="Exclude item" busy={busy} onClose={() => !busy && setCancelTarget(null)} onConfirm={(reason) => void cancelLine(reason)} />
-    <Toast message={notice || error} tone={error ? 'error' : 'success'} onDismiss={() => { setNotice(''); setError('') }} />
+    <Modal open={Boolean(excludeTarget)} title={`Exclude ${excludeTarget?.group.item_name ?? 'item'}?`} description="Cancelled quantity stays in history. The rest remains on the bill." onClose={() => !busy && setExcludeTarget(null)}>{excludeTarget && <><p className="modal-intro">{excludeTarget.group.quantity > 1 ? `${qtyLabel(excludeTarget.group.quantity)} on this bill. Choose how many to exclude.` : 'This is the only remaining unit of this item.'}</p>{excludeTarget.group.quantity > 1 && <label className="field"><span>Quantity to exclude</span><input type="number" min={1} max={excludeTarget.group.quantity} step="1" value={excludeTarget.quantity} onChange={(event) => setExcludeTarget({ ...excludeTarget, quantity: event.target.value })} /></label>}<label className="field"><span>Required reason</span><textarea rows={3} maxLength={1000} value={excludeTarget.reason} onChange={(event) => setExcludeTarget({ ...excludeTarget, reason: event.target.value })} /></label><div className="form-action-row"><button type="button" className="button button-secondary" disabled={busy} onClick={() => setExcludeTarget(null)}>Cancel</button><button type="button" className="button button-primary" disabled={busy || excludeTarget.reason.trim().length < 3 || value(excludeTarget.quantity) < 1 || value(excludeTarget.quantity) > excludeTarget.group.quantity} onClick={() => void cancelLine()}>{busy ? 'Saving…' : 'Exclude'}</button></div></>}</Modal>
+    <Toast message={error || notice} tone={error ? 'error' : 'success'} onDismiss={() => { setNotice(''); setError('') }} />
   </section>
 }

@@ -5,6 +5,7 @@ import { useAuth } from '../features/auth/AuthContext'
 import { can } from '../features/auth/permissions'
 import { idempotencyHeaders } from '../features/realtime/useRestaurantRealtime'
 import { api, errorMessage } from '../lib/api'
+import { groupBillLines, qtyLabel } from '../lib/billLines'
 import { printThermalReceipt, printsOnCustomerBill } from '../lib/thermalReceipt'
 import type { ApiEnvelope, DiningSession, Invoice } from '../types/api'
 import { money, readable, unwrap, value } from '../pages/opsShared'
@@ -43,9 +44,9 @@ export function InvoiceReceiptPanel({
   const [refundPayment, setRefundPayment] = useState<{ id: number; amount: string; refunded?: string; reason: string } | null>(null)
   const currency = session?.hotel.currency_code
   const items = invoice.items ?? []
-  const customerItems = items.filter(printsOnCustomerBill)
-  const internalItems = items.filter((item) => !printsOnCustomerBill(item))
-  const sectionTotal = (rows: typeof items) => rows.reduce((sum, item) => sum + value(item.line_total), 0)
+  const customerItems = groupBillLines(items.filter(printsOnCustomerBill))
+  const internalItems = groupBillLines(items.filter((item) => !printsOnCustomerBill(item)))
+  const sectionTotal = (rows: typeof customerItems) => rows.reduce((sum, item) => sum + item.line_total, 0)
 
   useEffect(() => {
     setGuest({
@@ -124,7 +125,7 @@ export function InvoiceReceiptPanel({
       items: bill.items ?? items,
       duplicate,
     })
-    if (!printed) onError('The print dialog could not be opened. Try Print again.')
+    if (!printed) onError('Printing was blocked by the browser. Allow pop-ups and try again.')
     else onNotice(duplicate ? 'Duplicate receipt sent to the printer.' : 'Bill sent to the printer.')
   }
 
@@ -136,10 +137,12 @@ export function InvoiceReceiptPanel({
     } catch (requestError) { onError(errorMessage(requestError)) }
   }
 
-  const renderBillLine = (item: (typeof items)[number]) => (
-    <div className="invoice-line" key={item.id}>
-      <span>{item.quantity} × {item.item_name}{item.status ? <small>{readable(item.status)}</small> : null}</span>
-      <strong>{money(item.line_total, currency)}</strong>
+  const renderBillLine = (group: (typeof customerItems)[number]) => (
+    <div className="invoice-line bill-qty-line" key={group.key}>
+      <span>{group.item_name}</span>
+      <b>{qtyLabel(group.quantity)}</b>
+      <span>{money(group.unit_price, currency)}</span>
+      <strong>{money(group.line_total, currency)}</strong>
     </div>
   )
 
@@ -148,12 +151,14 @@ export function InvoiceReceiptPanel({
     <div className="invoice-lines">
       <div className="bill-line-section">
         {internalItems.length > 0 && customerItems.length > 0 && <h3>Customer bill</h3>}
+        {customerItems.length > 0 && <div className="bill-qty-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amt</span></div>}
         {customerItems.map(renderBillLine)}
         {customerItems.length > 0 && <div className="bill-line-subtotal"><span>Items total</span><strong>{money(sectionTotal(customerItems), currency)}</strong></div>}
         {!customerItems.length && !internalItems.length && <p className="bill-empty-lines">No items on this bill yet.</p>}
       </div>
       {internalItems.length > 0 && <div className="bill-line-section internal-bill-section">
         <h3>Not on customer bill</h3>
+        <div className="bill-qty-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amt</span></div>
         {internalItems.map(renderBillLine)}
         <div className="bill-line-subtotal"><span>Internal total</span><strong>{money(sectionTotal(internalItems), currency)}</strong></div>
       </div>}

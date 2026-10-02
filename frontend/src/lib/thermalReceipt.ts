@@ -52,29 +52,23 @@ export function aggregateReceiptItems(items: ReceiptItem[]) {
   return [...lines.values()]
 }
 
+export function openThermalReceiptWindow() {
+  const popup = window.open('', '_blank', 'width=320,height=720')
+  if (!popup) return null
+  popup.opener = null
+  return popup
+}
+
+export function writeThermalReceipt(popup: Window, input: ThermalReceiptInput) {
+  popup.document.open()
+  popup.document.write(thermalReceiptHtml(input))
+  popup.document.close()
+}
+
 export function printThermalReceipt(input: ThermalReceiptInput) {
-  const html = thermalReceiptHtml(input)
-  const existing = document.getElementById('thermal-receipt-frame')
-  existing?.remove()
-  const frame = document.createElement('iframe')
-  frame.id = 'thermal-receipt-frame'
-  frame.setAttribute('aria-hidden', 'true')
-  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;'
-  document.body.appendChild(frame)
-  const doc = frame.contentDocument
-  const printWindow = frame.contentWindow
-  if (!doc || !printWindow) {
-    frame.remove()
-    return false
-  }
-  doc.open()
-  doc.write(html)
-  doc.close()
-  window.setTimeout(() => {
-    printWindow.focus()
-    printWindow.print()
-    window.setTimeout(() => frame.remove(), 1500)
-  }, 200)
+  const popup = openThermalReceiptWindow()
+  if (!popup) return false
+  writeThermalReceipt(popup, input)
   return true
 }
 
@@ -101,11 +95,16 @@ export function thermalReceiptHtml(input: ThermalReceiptInput) {
   const itemRows = lines.map((line) => `<div class="line"><span>${escapeHtml(line.name)}</span><span>${qtyLabel(line.qty)}</span><span>${moneyPlain(line.price)}</span><span>${moneyPlain(line.amount)}</span></div>`).join('')
 
   return `<!doctype html><html><head><title>${escapeHtml(invoice.invoice_number)}</title>
+<meta name="viewport" content="width=80mm" />
 <style>
-@page { size: 80mm auto; margin: 3mm; }
+@page { size: 80mm auto; margin: 2mm; }
 * { box-sizing: border-box; }
-html, body { width: 80mm; margin: 0; background: #fff; color: #111; font-family: "Courier New", Courier, ui-monospace, monospace; }
-.receipt { width: 74mm; margin: 0 auto; font-size: 12px; line-height: 1.28; }
+html, body { width: 80mm; max-width: 80mm; min-width: 80mm; margin: 0; padding: 0; background: #fff; color: #111; font-family: "Courier New", Courier, ui-monospace, monospace; }
+@media print {
+  @page { size: 80mm auto; margin: 2mm; }
+  html, body { width: 80mm !important; max-width: 80mm !important; min-width: 80mm !important; margin: 0 !important; }
+}
+.receipt { width: 76mm; margin: 0 auto; font-size: 12px; line-height: 1.28; }
 .center { text-align: center; }
 .hotel { margin: 4px 0 2px; font-size: 15px; font-weight: 800; }
 .muted { font-size: 11px; }
@@ -138,5 +137,6 @@ html, body { width: 80mm; margin: 0; background: #fff; color: #111; font-family:
   <p class="grand">Grand Total ₹ ${moneyPlain(grand)}</p>
   <p class="thanks">Thank You!!! Visit Again.</p>
 </main>
+<script>window.addEventListener('load', function () { window.focus(); window.print(); window.addEventListener('afterprint', function () { window.close() }) })</script>
 </body></html>`
 }

@@ -64,10 +64,12 @@ class KitchenController extends ApiController
 
     public function cancel(Request $request, int $item, OrderService $orders, InventoryService $inventory): JsonResponse
     {
-        $data = $request->validate(['reason' => ['required', 'string', 'max:1000']]);
+        $data = $request->validate(['reason' => ['required', 'string', 'max:1000'], 'quantity' => ['nullable', 'numeric', 'gt:0', 'max:9999']]);
         $item = $this->item($request, $item);
         $permissions = $request->attributes->get('currentPermissions', []);
         $owner = (bool) $request->attributes->get('currentRole')?->is_owner;
+        $cancelQty = array_key_exists('quantity', $data) && $data['quantity'] !== null ? (float) $data['quantity'] : (float) $item->quantity;
+        abort_unless($cancelQty <= (float) $item->quantity, 422, 'Enter a quantity that is still on this line.');
 
         $preparedKitchenItem = $item->fulfillment_mode === 'kitchen' && in_array($item->status, ['preparing', 'ready'], true);
         if ($preparedKitchenItem) {
@@ -76,11 +78,12 @@ class KitchenController extends ApiController
         if ($item->status === 'served') {
             abort_unless($owner || in_array('orders.cancel_served', $permissions, true), 403, 'Cancelling a served item requires additional permission.');
         }
-        if ((float) $item->line_total >= (float) config('restaurant.high_value_cancellation_threshold', 1000)) {
+        $cancelShare = (float) $item->quantity > 0 ? ((float) $item->line_total / (float) $item->quantity) * $cancelQty : (float) $item->line_total;
+        if ($cancelShare >= (float) config('restaurant.high_value_cancellation_threshold', 1000)) {
             abort_unless($owner || in_array('orders.cancel_high_value', $permissions, true), 403, 'This high-value cancellation requires approval.');
         }
 
-        return $this->success($orders->cancelItem($item, $data['reason'], $request->user(), $inventory), 'Item cancelled.');
+        return $this->success($orders->cancelItem($item, $data['reason'], $request->user(), $inventory, array_key_exists('quantity', $data) ? (float) $data['quantity'] : null), 'Item cancelled.');
     }
 
     private function item(Request $request, int $id): OrderItem

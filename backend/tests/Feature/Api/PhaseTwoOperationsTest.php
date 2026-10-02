@@ -270,6 +270,30 @@ class PhaseTwoOperationsTest extends TestCase
         $this->assertSame('80.00', DiningSession::query()->findOrFail($sessionId)->total_amount);
     }
 
+    public function test_direct_item_quantity_can_be_partially_cancelled(): void
+    {
+        [$owner, $hotel] = $this->ownerContext();
+        $outlet = $hotel->outlets()->sole();
+        $product = Product::query()->create(['hotel_id' => $hotel->id, 'fulfillment_mode' => 'direct', 'name' => 'Water Bottle', 'selling_price' => 40, 'track_inventory' => false]);
+        $table = DiningTable::query()->create(['outlet_id' => $outlet->id, 'name' => 'Table 2', 'code' => 'T2', 'capacity' => 4]);
+        $sessionId = $this->actingAs($owner, 'web')->postJson("/api/v1/tables/{$table->id}/sessions")->json('data.id');
+        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'partial-qty-order')->postJson("/api/v1/dining-sessions/{$sessionId}/orders", ['items' => [['product_id' => $product->id, 'quantity' => 3]]])->assertCreated();
+
+        $item = OrderItem::query()->sole();
+        $this->assertSame('3.000', $item->quantity);
+
+        $this->actingAs($owner, 'web')->postJson("/api/v1/order-items/{$item->id}/cancel", ['reason' => 'Guest returned one bottle', 'quantity' => 1])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'cancelled')
+            ->assertJsonPath('data.quantity', '1.000');
+
+        $remaining = $item->fresh();
+        $this->assertSame('ready', $remaining->status);
+        $this->assertSame('2.000', $remaining->quantity);
+        $this->assertSame(1, OrderItem::query()->where('status', 'cancelled')->count());
+        $this->assertSame('80.00', DiningSession::query()->findOrFail($sessionId)->total_amount);
+    }
+
     /** @return array{User, int, OrderItem, InventoryStock} */
     private function ticketContext(): array
     {
