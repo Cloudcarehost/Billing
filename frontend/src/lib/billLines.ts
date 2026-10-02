@@ -9,7 +9,7 @@ export type BillableLine = {
   print_on_bill?: boolean | null
   status?: string
   product_id?: number | null
-  product?: { id?: number } | null
+  product?: { id?: number; category?: { print_on_bill?: boolean | null } | null } | null
 }
 
 export type BillLineGroup<T extends BillableLine = BillableLine> = {
