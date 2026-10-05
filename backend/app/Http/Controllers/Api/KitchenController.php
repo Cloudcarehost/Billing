@@ -3,12 +3,16 @@
 namespace App\Http\Controllers\Api;
 
 use App\Enums\OrderItemStatus;
+use App\Enums\OutletOrderFlow;
 use App\Models\KitchenStation;
+use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\Outlet;
 use App\Services\AuditService;
 use App\Services\InventoryService;
 use App\Services\KitchenService;
 use App\Services\OrderService;
+use App\Support\RestaurantRealtime;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -84,6 +88,51 @@ class KitchenController extends ApiController
         }
 
         return $this->success($orders->cancelItem($item, $data['reason'], $request->user(), $inventory, array_key_exists('quantity', $data) ? (float) $data['quantity'] : null), 'Item cancelled.');
+    }
+
+    public function liveBoard(Request $request): JsonResponse
+    {
+        $hotel = $request->attributes->get('currentHotel');
+        $outletIds = $request->attributes->get('accessibleOutletIds', []);
+        $outletId = $request->integer('outlet_id') ?: (int) ($outletIds[0] ?? 0);
+        $outlet = Outlet::query()->where('hotel_id', $hotel->id)->whereIn('id', $outletIds)->findOrFail($outletId);
+        if ($outlet->order_flow !== OutletOrderFlow::DirectBill->value) {
+            return $this->success(['queue' => [], 'done' => []]);
+        }
+
+        $cutoff = now()->subHours(3);
+        $base = Order::query()
+            ->whereHas('diningSession', fn ($query) => $query->where('hotel_id', $hotel->id)->where('outlet_id', $outlet->id)->whereIn('status', ['occupied', 'pending_bill']))
+            ->whereHas('items', fn ($query) => $query->where('status', '!=', 'cancelled'))
+            ->with(['items' => fn ($query) => $query->where('status', '!=', 'cancelled'), 'diningSession.diningTable:id,name,code', 'diningSession.joinedTables:id,name', 'creator:id,name']);
+
+        $queue = (clone $base)->whereNull('tracked_done_at')->orderBy('sent_at')->orderBy('id')->limit(100)->get();
+        $done = (clone $base)->whereNotNull('tracked_done_at')->where('tracked_done_at', '>=', $cutoff)->orderByDesc('tracked_done_at')->orderByDesc('id')->limit(100)->get();
+
+        return $this->success([
+            'queue' => $queue->map(fn (Order $order) => RestaurantRealtime::liveTicket($order))->values(),
+            'done' => $done->map(fn (Order $order) => RestaurantRealtime::liveTicket($order))->values(),
+        ]);
+    }
+
+    public function trackDone(Request $request, int $order): JsonResponse
+    {
+        $hotel = $request->attributes->get('currentHotel');
+        $order = Order::query()
+            ->whereHas('diningSession', fn ($query) => $query
+                ->where('hotel_id', $hotel->id)
+                ->whereIn('outlet_id', $request->attributes->get('accessibleOutletIds', []))
+                ->whereIn('status', ['occupied', 'pending_bill']))
+            ->with(['items', 'diningSession.outlet', 'diningSession.diningTable', 'diningSession.joinedTables:id,name', 'creator:id,name'])
+            ->findOrFail($order);
+        abort_unless($order->diningSession?->outlet?->order_flow === OutletOrderFlow::DirectBill->value, 422, 'Live tracking is only for direct to bill outlets.');
+        if (! $order->tracked_done_at) {
+            $order->update(['tracked_done_at' => now()]);
+        }
+        $ticket = RestaurantRealtime::liveTicket($order->fresh(['items', 'diningSession.diningTable', 'diningSession.joinedTables:id,name', 'creator:id,name']));
+        RestaurantRealtime::dispatchToMembers('live_ticket_done', $order->diningSession, ['live_ticket' => $ticket], $order->id);
+
+        return $this->success($ticket, 'Ticket marked done.');
     }
 
     private function item(Request $request, int $id): OrderItem

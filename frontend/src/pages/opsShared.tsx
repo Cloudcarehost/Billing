@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Wifi, WifiOff } from 'lucide-react'
 import { api } from '../lib/api'
 import type { ApiEnvelope, DiningTable, Session } from '../types/api'
@@ -35,6 +35,24 @@ export function sessionCanTakeOrders(session?: { status?: string; invoice?: { id
 export function isDirectBillOutlet(outlets: Session['outlets'] | undefined, outletId: number | null | undefined) {
   if (!outletId || !outlets) return false
   return outlets.find((outlet) => outlet.id === outletId)?.order_flow === 'direct_bill'
+}
+
+export function elapsedHm(openedAt: string | Date | null | undefined, now = Date.now()) {
+  if (!openedAt) return null
+  const start = new Date(openedAt).getTime()
+  if (!Number.isFinite(start)) return null
+  const minutes = Math.max(0, Math.floor((now - start) / 60000))
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`
+}
+
+export function useElapsedClock(enabled = true) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!enabled) return
+    const timer = window.setInterval(() => setNow(Date.now()), 30000)
+    return () => window.clearInterval(timer)
+  }, [enabled])
+  return now
 }
 export function readyToServeCount(table: DiningTable, skipReady = false): number {
   if (skipReady) return 0

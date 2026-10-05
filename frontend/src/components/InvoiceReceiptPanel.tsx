@@ -118,7 +118,7 @@ export function InvoiceReceiptPanel({
     const printed = printThermalReceipt({
       hotel: session.hotel,
       outlet: session.outlets.find((outlet) => outlet.id === activeOutletId) ?? session.outlets[0],
-      cashier: session.user.name,
+      cashier: 'cashier',
       tableName,
       serviceLabel,
       invoice: bill,

@@ -5,6 +5,7 @@ namespace App\Support;
 use App\Events\RestaurantUpdated;
 use App\Models\DiningSession;
 use App\Models\DiningTable;
+use App\Models\Order;
 use App\Models\OrderItem;
 
 class RestaurantRealtime
@@ -89,6 +90,32 @@ class RestaurantRealtime
                         : null,
                 ],
             ] : null,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public static function liveTicket(Order $order): array
+    {
+        $order->loadMissing(['items', 'diningSession.diningTable:id,name,code', 'diningSession.joinedTables:id,name', 'creator:id,name']);
+        $session = $order->diningSession;
+        $active = $order->items->where('status', '!=', 'cancelled');
+
+        return [
+            'id' => $order->id,
+            'ticket_number' => $order->ticket_number,
+            'round_number' => $order->round_number,
+            'sent_at' => $order->sent_at?->toISOString() ?? $order->created_at?->toISOString(),
+            'tracked_done_at' => $order->tracked_done_at?->toISOString(),
+            'session_id' => $order->dining_session_id,
+            'table_name' => $session?->displayName() ?: ($session?->diningTable?->name ?? 'Table'),
+            'creator_name' => $order->creator?->name,
+            'items' => $active->map(fn ($item) => [
+                'id' => $item->id,
+                'item_name' => $item->item_name,
+                'quantity' => (string) $item->quantity,
+            ])->values()->all(),
         ];
     }
 

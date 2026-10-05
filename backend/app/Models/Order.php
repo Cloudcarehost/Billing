@@ -13,7 +13,7 @@ class Order extends Model
 
     protected $fillable = [
         'dining_session_id', 'created_by', 'ticket_number', 'status', 'round_number',
-        'sent_at', 'started_at', 'ready_at', 'served_at',
+        'sent_at', 'started_at', 'ready_at', 'served_at', 'tracked_done_at',
         'cancelled_at', 'notes',
     ];
 
@@ -23,6 +23,7 @@ class Order extends Model
             'round_number' => 'integer', 'sent_at' => 'datetime',
             'started_at' => 'datetime',
             'ready_at' => 'datetime', 'served_at' => 'datetime',
+            'tracked_done_at' => 'datetime',
             'cancelled_at' => 'datetime',
         ];
     }

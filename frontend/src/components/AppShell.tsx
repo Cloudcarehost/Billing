@@ -182,11 +182,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (window.matchMedia('(max-width: 760px)').matches) setMenuOpen(false)
   }
   const links = <>
-    <nav className="main-nav">{navigation.filter(([, path, , permission]) => {
-      if (!can(session, permission)) return false
-      if (path === '/app/kitchen' && session.outlets.length > 0 && session.outlets.every((outlet) => outlet.order_flow === 'direct_bill')) return false
-      return true
-    }).map(([label, path, Icon]) => <NavLink key={path} to={path} end={path === '/app'} className="nav-link" onClick={closeDrawerIfMobile}><Icon size={17} />{label}{path === '/app/billing' && pendingBills > 0 ? <b className="nav-count">{pendingBills > 9 ? '9+' : pendingBills}</b> : null}</NavLink>)}</nav>
+    <nav className="main-nav">{navigation.filter(([, , , permission]) => can(session, permission)).map(([label, path, Icon]) => <NavLink key={path} to={path} end={path === '/app'} className="nav-link" onClick={closeDrawerIfMobile}><Icon size={17} />{label}{path === '/app/billing' && pendingBills > 0 ? <b className="nav-count">{pendingBills > 9 ? '9+' : pendingBills}</b> : null}</NavLink>)}</nav>
     <div className="sidebar-bottom">
       {can(session, 'settings.manage') && <NavLink to="/app/settings/hotel" className="nav-link" onClick={closeDrawerIfMobile}><Settings size={17} />Hotel settings</NavLink>}
       {can(session, 'settings.manage') && <NavLink to="/app/settings/outlets" className="nav-link" onClick={closeDrawerIfMobile}><Store size={17} />Outlets</NavLink>}

@@ -1,6 +1,6 @@
 import { CircleDollarSign, History, Plus, ReceiptText, Undo2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { InvoiceReceiptPanel } from '../components/InvoiceReceiptPanel'
 import { Modal, Toast } from '../components/ui/Feedback'
 import { useAuth } from '../features/auth/AuthContext'
@@ -10,12 +10,16 @@ import { api, errorMessage } from '../lib/api'
 import type { ApiEnvelope, DiningSession, DiningTable, Invoice, OrderItem } from '../types/api'
 import { groupBillLines, qtyLabel, statusSummary, takeExcludeUnits, type BillLineGroup } from '../lib/billLines'
 import { openThermalReceiptWindow, printThermalReceipt, printsOnCustomerBill, writeThermalReceipt } from '../lib/thermalReceipt'
-import { ConnectionState, isParcelTable, isPrimaryMergedTable, mergedTableLabel, money, readable, sessionCanTakeOrders, sessionDisplayName, unwrap, useOperationalRefresh, value } from './opsShared'
+import { ConnectionState, elapsedHm, isParcelTable, isPrimaryMergedTable, mergedTableLabel, money, readable, sessionCanTakeOrders, sessionDisplayName, unwrap, useElapsedClock, useOperationalRefresh, value } from './opsShared'
 import { applyTableEvent } from '../features/realtime/applyRestaurantEvent'
 
 export function BillingPage() {
   const { session, activeOutletId } = useAuth()
   const navigate = useNavigate()
+  const [params] = useSearchParams()
+  const requestedSessionId = Number(params.get('session')) || null
+  const requestedTableId = Number(params.get('table')) || null
+  const clock = useElapsedClock()
   const [tables, setTables] = useState<DiningTable[]>([])
   const [owners, setOwners] = useState<Array<{ id: number; name: string }>>([])
   const [selectedSession, setSelectedSession] = useState<DiningSession | null>(null)
@@ -51,9 +55,20 @@ export function BillingPage() {
   useEffect(() => { const task = window.setTimeout(() => void loadTables(), 0); return () => window.clearTimeout(task) }, [loadTables])
   useEffect(() => {
     if (selectedBillingSessionId) return
+    if (requestedSessionId) {
+      const match = tables.find((table) => table.active_session?.id === requestedSessionId)?.active_session
+      if (match) setSelectedSession(match)
+      else void loadSelected(requestedSessionId)
+      return
+    }
+    if (requestedTableId) {
+      const match = tables.find((table) => table.id === requestedTableId)?.active_session
+      if (match) setSelectedSession(match)
+      return
+    }
     const pending = tables.find((table) => table.display_status === 'pending_bill')?.active_session
     if (pending) setSelectedSession(pending)
-  }, [tables, selectedBillingSessionId])
+  }, [tables, selectedBillingSessionId, requestedSessionId, requestedTableId, loadSelected])
   useEffect(() => {
     if (!selectedBillingSessionId) return
     const task = window.setTimeout(() => void loadSelected(selectedBillingSessionId), 0)
@@ -173,7 +188,7 @@ export function BillingPage() {
     const input = {
       hotel: session.hotel,
       outlet: session.outlets.find((outlet) => outlet.id === activeOutletId) ?? session.outlets[0],
-      cashier: session.user.name,
+      cashier: 'cashier',
       tableName: sessionDisplayName(selectedSession, tables.find((table) => table.active_session?.id === selectedSession?.id && isPrimaryMergedTable(table))?.name ?? selectedSession?.dining_table?.name ?? bill.dining_session?.dining_table?.name ?? 'Table'),
       serviceLabel: isParcelTable(tables.find((table) => table.active_session?.id === selectedSession?.id) ?? (selectedSession?.dining_table as DiningTable | undefined)) ? 'Parcel' : 'Dine In',
       invoice: bill,
@@ -226,7 +241,7 @@ export function BillingPage() {
   const selectedTable = tables.find((table) => table.active_session?.id === selectedSession?.id)
   return <section className="billing-page">
     <div className="page-heading"><div><p className="eyebrow">COUNTER BILLING</p><h1>Settle table bills</h1><p>Create the final bill, take split payments, and retain corrections safely.</p></div><div className="heading-actions"><Link className="button button-secondary" to="/app/billing/history"><History size={15} />Previous bills</Link><ConnectionState status={status} /></div></div>
-    <div className="billing-layout enhanced-billing-layout"><aside className="billing-session-list"><h2>Open tables & parcels</h2>{tables.filter((table) => table.active_session && isPrimaryMergedTable(table)).map((table) => { const label = mergedTableLabel(table); return <button type="button" className={`bill-table ${selectedSession?.id === table.active_session?.id ? 'active' : ''} ${table.display_status === 'pending_bill' ? 'needs-bill' : ''}`} key={table.active_session?.id ?? table.id} onClick={() => setSelectedSession(table.active_session ?? null)}><span><strong>{label.title}</strong><small>{isParcelTable(table) ? 'Parcel' : readable(table.display_status)} · {isParcelTable(table) ? 'takeaway' : `${table.active_session?.guest_count} guests`}{label.detail ? ` · ${label.detail}` : ''}</small></span><b>{money(table.current_total, session?.hotel.currency_code)}</b></button> })}</aside>
+    <div className="billing-layout enhanced-billing-layout"><aside className="billing-session-list"><h2>Open tables & parcels</h2>{tables.filter((table) => table.active_session && isPrimaryMergedTable(table)).map((table) => { const label = mergedTableLabel(table); const openFor = elapsedHm(table.active_session?.opened_at, clock); return <button type="button" className={`bill-table ${selectedSession?.id === table.active_session?.id ? 'active' : ''} ${table.display_status === 'pending_bill' ? 'needs-bill' : ''}`} key={table.active_session?.id ?? table.id} onClick={() => setSelectedSession(table.active_session ?? null)}><span><strong>{label.title}</strong><small>{isParcelTable(table) ? 'Parcel' : readable(table.display_status)} · {isParcelTable(table) ? 'takeaway' : `${table.active_session?.guest_count} guests`}{openFor ? ` · ${openFor}` : ''}{label.detail ? ` · ${label.detail}` : ''}</small></span><b>{money(table.current_total, session?.hotel.currency_code)}</b></button> })}</aside>
       <main className="invoice-panel receipt-panel">{!selectedSession ? <div className="invoice-empty"><CircleDollarSign size={38} /><h2>Select a table</h2><p>Pending-bill tables are highlighted so the counter can settle them quickly.</p></div> : invoice ? <InvoiceReceiptPanel invoice={invoice} busy={busy} tableName={sessionDisplayName(selectedSession, selectedTable && isPrimaryMergedTable(selectedTable) ? selectedTable.name : selectedSession.dining_table?.name)} serviceLabel={isParcelTable(selectedTable ?? (selectedSession.dining_table as DiningTable | undefined)) ? 'Parcel' : 'Dine In'} onBusy={setBusy} onInvoiceChange={(updated) => { setInvoice(updated); if (updated.payment_status === 'paid' && selectedSession) setTables((openTables) => openTables.map((entry) => entry.active_session?.id === selectedSession.id ? { ...entry, display_status: 'available', current_total: '0.00', active_session: null } : entry)) }} onNotice={setNotice} onError={setError} onReopened={(updated) => { setInvoice(null); setSelectedSession(updated); void loadTables() }} onVoided={() => { setInvoice(null); setSelectedSession(null); void loadTables() }} /> : selectedSession.invoice ? <div className="invoice-empty"><h2>Loading bill…</h2></div> : <>
         <div className="invoice-heading"><div><h2>{selectedSession.display_name ?? selectedSession.dining_table?.name ?? 'Current table'}</h2><span>Bill not yet created</span></div></div>
         <div className="invoice-lines">
@@ -244,7 +259,7 @@ export function BillingPage() {
             <div className="bill-line-subtotal"><span>Internal total</span><strong>{money(sectionTotal(internalItems), session?.hotel.currency_code)}</strong></div>
           </div>}
         </div>
-        {can(session, 'orders.create') && openForItems && <button type="button" className="button button-secondary" onClick={() => navigate(`/app/orders?table=${selectedSession.dining_table_id}`)}><Plus size={15} />Include items</button>}
+        {can(session, 'orders.create') && openForItems && <button type="button" className="button button-secondary" onClick={() => navigate(`/app/orders?table=${selectedSession.dining_table_id}&from=billing&session=${selectedSession.id}`)}><Plus size={15} />Include items</button>}
         {can(session, 'billing.discount') && <div className="discount-row discount-linked-row"><label className="field"><span>Discount %</span><input type="number" min="0" max="100" step="0.01" value={discountPercent} onChange={(event) => changeDiscountPercent(event.target.value)} placeholder="0" /></label><label className="field"><span>Discount amount</span><input type="number" min="0" step="0.01" value={discount} onChange={(event) => changeDiscountAmount(event.target.value)} placeholder="0.00" /></label><button type="button" className="button button-secondary" disabled={busy} onClick={() => void applyDiscount()}>Apply</button></div>}
         {can(session, 'billing.create') && <div className="discount-row guest-details">{owners.length > 0 && <label className="field"><span>Put on owner</span><select value={chargedToUserId} onChange={(event) => { const next = event.target.value; setChargedToUserId(next); const owner = owners.find((entry) => String(entry.id) === next); if (owner) setGuest((currentGuest) => ({ ...currentGuest, customer_name: owner.name })) }}><option value="">Regular guest bill</option>{owners.map((owner) => <option key={owner.id} value={owner.id}>{owner.name}</option>)}</select></label>}<label className="field"><span>Guest / owner name</span><input value={guest.customer_name} onChange={(event) => setGuest((currentGuest) => ({ ...currentGuest, customer_name: event.target.value }))} placeholder="Not required to bill" /></label><label className="field"><span>Phone (optional)</span><input value={guest.customer_phone} onChange={(event) => setGuest((currentGuest) => ({ ...currentGuest, customer_phone: event.target.value }))} /></label><label className="field"><span>Email (optional)</span><input type="email" value={guest.customer_email} onChange={(event) => setGuest((currentGuest) => ({ ...currentGuest, customer_email: event.target.value }))} /></label><label className="field"><span>GSTIN (optional)</span><input value={guest.customer_gstin} onChange={(event) => setGuest((currentGuest) => ({ ...currentGuest, customer_gstin: event.target.value }))} /></label></div>}
         <div className="invoice-total"><span>Total</span><strong>{money(selectedSession.total_amount, session?.hotel.currency_code)}</strong>{value(selectedSession.discount_amount) > 0 ? <span>Discount {money(selectedSession.discount_amount, session?.hotel.currency_code)}</span> : null}</div>

@@ -9,7 +9,7 @@ import { can, canCancelItem } from '../features/auth/permissions'
 import { idempotencyHeaders, useRestaurantRealtime } from '../features/realtime/useRestaurantRealtime'
 import { api, errorMessage } from '../lib/api'
 import type { ApiEnvelope, DiningSession, DiningTable, OrderItem, Outlet, PopularProduct, Product } from '../types/api'
-import { acknowledgeWaiterCall, ConnectionState, isDirectBillOutlet, isParcelTable, mergedTableLabel, money, readable, readyToServeCount, sessionCanTakeOrders, TableAlertMarks, unwrap, useOperationalRefresh, value } from './opsShared'
+import { acknowledgeWaiterCall, ConnectionState, elapsedHm, isDirectBillOutlet, isParcelTable, mergedTableLabel, money, readable, readyToServeCount, sessionCanTakeOrders, TableAlertMarks, unwrap, useElapsedClock, useOperationalRefresh, value } from './opsShared'
 import { applyTableEvent, tableWithSession } from '../features/realtime/applyRestaurantEvent'
 import { useReadyNotifications } from '../features/notifications/ReadyNotificationContext'
 
@@ -17,6 +17,7 @@ export function OrdersPage() {
   const { session, activeOutletId } = useAuth()
   const { ingestFloorTables } = useReadyNotifications()
   const canOpenSession = can(session, 'sessions.open')
+  const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const [tables, setTables] = useState<DiningTable[]>([])
   const { data: products = [] } = useQuery({ queryKey: ['order-products', activeOutletId], queryFn: async () => unwrap(await api.get<ApiEnvelope<Product[]>>('/api/v1/products/search', { params: { active: 1, limit: 500 } })), staleTime: 5 * 60_000 })
@@ -36,7 +37,9 @@ export function OrdersPage() {
   const requestedTableId = Number(params.get('table')) || null
   const chooseTable = (tableId: number) => {
     setSelectedTableId(tableId)
-    setParams({ table: String(tableId) }, { replace: true })
+    const next = new URLSearchParams(params)
+    next.set('table', String(tableId))
+    setParams(next, { replace: true })
     setTables((current) => current.map((entry) => entry.id === tableId && entry.waiter_called ? { ...entry, waiter_called: false } : entry))
     void acknowledgeWaiterCall(tableId).catch(() => undefined)
   }
@@ -145,6 +148,10 @@ export function OrdersPage() {
     try {
       const updated = unwrap(await api.post<ApiEnvelope<DiningSession>>(`/api/v1/dining-sessions/${active.id}/orders`, { items: cartItems.map(({ product, quantity, note }) => ({ product_id: product.id, quantity, kitchen_note: note || null })) }, { headers: idempotencyHeaders() }))
       setCart({}); setTables((current) => current.map((entry) => entry.id === table.id ? tableWithSession(entry, updated) : entry)); setNotice(directBill ? 'Items added to the bill.' : 'Order sent to the kitchen.')
+      if (params.get('from') === 'billing') {
+        const billingSession = Number(params.get('session')) || active.id
+        navigate(`/app/billing?session=${billingSession}`)
+      }
     } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) }
   }
   const requestBill = async () => {
@@ -221,6 +228,7 @@ export function TablesPage() {
   const [params] = useSearchParams()
   const manageTables = can(session, 'tables.configure')
   const canAssignWaiter = can(session, 'sessions.assign')
+  const clock = useElapsedClock()
   const [tables, setTables] = useState<DiningTable[]>([])
   const [outlets, setOutlets] = useState<Outlet[]>([])
   const [staff, setStaff] = useState<Array<{ id: number; name: string }>>([])
@@ -382,8 +390,9 @@ export function TablesPage() {
     const hideKitchenStatus = isDirectBillOutlet(session?.outlets, table.outlet_id)
     const parcel = isParcelTable(table)
     const mergeLabel = mergedTableLabel(table)
+    const openFor = elapsedHm(table.active_session?.opened_at, clock)
     return <article key={table.id} className={`floor-card ${table.display_status} ${table.display_status === 'pending_bill' ? 'bill-highlight' : ''}${ready ? ' needs-serve' : ''}${called ? ' needs-waiter' : ''}`}>
-      <div className="floor-card-heading"><div><span className={`table-state ${table.display_status}`}>{parcel ? 'Parcel' : readable(table.display_status)}</span>{table.primary_table && table.primary_table.id !== table.id ? <span className="joined-table-badge">{mergeLabel.detail}</span> : null}<h2>{table.name}<TableAlertMarks ready={ready} waiterCalled={called} /></h2><p>{table.active_session ? `${parcel ? 'Takeaway' : `${table.active_session.guest_count} guests`} · ${table.active_session.waiter?.name ?? 'No waiter'}${table.primary_table && table.primary_table.id === table.id && mergeLabel.detail ? ` · ${mergeLabel.detail}` : ''}${called ? ' · guest called waiter' : ''}${ready ? ' · food ready to serve' : ''}` : table.is_active ? `${table.capacity} seats` : 'Unavailable'}</p></div>{parcel ? <Package size={27} /> : <ChefHat size={27} />}</div>
+      <div className="floor-card-heading"><div><span className={`table-state ${table.display_status}`}>{parcel ? 'Parcel' : readable(table.display_status)}</span>{table.primary_table && table.primary_table.id !== table.id ? <span className="joined-table-badge">{mergeLabel.detail}</span> : null}<h2>{table.name}<TableAlertMarks ready={ready} waiterCalled={called} /></h2><p>{table.active_session ? `${parcel ? 'Takeaway' : `${table.active_session.guest_count} guests`} · ${table.active_session.waiter?.name ?? 'No waiter'}${openFor ? ` · ${openFor}` : ''}${table.primary_table && table.primary_table.id === table.id && mergeLabel.detail ? ` · ${mergeLabel.detail}` : ''}${called ? ' · guest called waiter' : ''}${ready ? ' · food ready to serve' : ''}` : table.is_active ? `${table.capacity} seats` : 'Unavailable'}</p></div>{parcel ? <Package size={27} /> : <ChefHat size={27} />}</div>
       {table.active_session ? <><div className="table-order-preview">{table.active_session.orders.flatMap((order) => order.items).filter((item) => item.status !== 'cancelled').slice(0, 4).map((item) => <span key={item.id}>{item.item_name}<b>{item.quantity}{hideKitchenStatus ? '' : ` · ${readable(item.status)}`}</b></span>)}</div><div className="table-total"><span>Current bill</span><strong>{money(table.current_total, session?.hotel.currency_code)}</strong></div><div className="card-actions table-card-actions"><button type="button" className="button button-secondary" onClick={() => { clearCall(); setSelected(table); setAssignWaiterId(table.active_session?.waiter_id ? String(table.active_session.waiter_id) : '') }}>View details</button><button type="button" className="button button-primary" onClick={() => { clearCall(); navigate(`/app/orders?table=${table.id}`) }}>Add order</button>{!parcel && table.active_session.status === 'occupied' && can(session, 'sessions.open') && <button type="button" className="button button-secondary" onClick={() => openMerge(table)}><Combine size={14} />Merge tables</button>}{!parcel && table.primary_table && table.primary_table.id !== table.id && can(session, 'sessions.open') && <button type="button" className="button button-secondary" onClick={() => void unmergeTable(table)}>Remove from merge</button>}{table.active_session.status === 'occupied' && can(session, 'billing.request') && <button type="button" className="button button-bill-request" disabled={requestingBillId === table.active_session.id} onClick={() => setBillRequestTable(table)}><ReceiptText size={14} />{requestingBillId === table.active_session.id ? 'Requesting…' : 'Request bill'}</button>}{parcel && can(session, 'sessions.open') && <button type="button" className="button button-danger-soft cancel-parcel-button" onClick={() => setCancelParcelTable(table)}><Ban size={14} />Cancel parcel</button>}</div></> : <div className="empty-table">No active order{table.is_active && <button type="button" className="text-action" onClick={() => { clearCall(); navigate(`/app/orders?table=${table.id}`) }}>Open order</button>}</div>}
       {manageTables && !parcel && <button type="button" className="text-action" onClick={() => openTableForm(table)}><Pencil size={14} />Edit table</button>}
     </article>

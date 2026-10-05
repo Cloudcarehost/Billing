@@ -208,10 +208,14 @@ class DiningBillingService
             $this->recalculate($session);
             $order->load(['items', 'creator:id,name', 'diningSession.diningTable', 'diningSession.joinedTables:id,name']);
             $session->load(['diningTable', 'waiter', 'joinedTables:id,name,code', 'orders.items']);
-            RestaurantRealtime::dispatchToMembers('order_sent', $session, [
+            $payload = [
                 'ticket_number' => $order->ticket_number,
                 'kitchen_items' => $directBill ? [] : $order->items->where('fulfillment_mode', 'kitchen')->map(fn ($item) => RestaurantRealtime::kitchenItem($item))->values()->all(),
-            ], $order->id);
+            ];
+            if ($directBill) {
+                $payload['live_ticket'] = RestaurantRealtime::liveTicket($order);
+            }
+            RestaurantRealtime::dispatchToMembers('order_sent', $session, $payload, $order->id);
 
             return $session->fresh();
         });

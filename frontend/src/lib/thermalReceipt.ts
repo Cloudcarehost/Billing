@@ -73,7 +73,7 @@ export function printThermalReceipt(input: ThermalReceiptInput) {
 }
 
 export function thermalReceiptHtml(input: ThermalReceiptInput) {
-  const { hotel, outlet, cashier, tableName, invoice, duplicate, serviceLabel = 'Dine In' } = input
+  const { hotel, outlet, tableName, invoice, duplicate, serviceLabel = 'Dine In' } = input
   const printable = input.items.filter(printsOnCustomerBill)
   const omitted = printable.length !== input.items.length
   const lines = aggregateReceiptItems(printable)
@@ -97,25 +97,34 @@ export function thermalReceiptHtml(input: ThermalReceiptInput) {
   return `<!doctype html><html><head><title>${escapeHtml(invoice.invoice_number)}</title>
 <meta name="viewport" content="width=80mm" />
 <style>
-@page { size: 80mm auto; margin: 2mm; }
+@page { size: 80mm auto; margin: 0; }
 * { box-sizing: border-box; }
-html, body { width: 80mm; max-width: 80mm; min-width: 80mm; margin: 0; padding: 0; background: #fff; color: #111; font-family: "Courier New", Courier, ui-monospace, monospace; }
-@media print {
-  @page { size: 80mm auto; margin: 2mm; }
-  html, body { width: 80mm !important; max-width: 80mm !important; min-width: 80mm !important; margin: 0 !important; }
+html, body {
+  width: 80mm; max-width: 80mm; min-width: 80mm; margin: 0; padding: 0;
+  background: #fff; color: #000;
+  font-family: Arial, Helvetica, sans-serif;
+  font-weight: 700;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
 }
-.receipt { width: 76mm; margin: 0 auto; font-size: 12px; line-height: 1.28; }
+@media print {
+  @page { size: 80mm auto; margin: 0; }
+  html, body { width: 80mm !important; max-width: 80mm !important; min-width: 80mm !important; margin: 0 !important; color: #000 !important; }
+}
+.receipt { width: 80mm; padding: 2mm 3mm 0; font-size: 15px; line-height: 1.35; font-weight: 700; }
 .center { text-align: center; }
-.hotel { margin: 4px 0 2px; font-size: 15px; font-weight: 800; }
-.muted { font-size: 11px; }
-.meta { display: flex; justify-content: space-between; gap: 8px; margin: 2px 0; }
-.rule { margin: 7px 0; border: 0; border-top: 1px dashed #111; }
-.head, .line { display: grid; grid-template-columns: 1fr 28px 52px 52px; gap: 3px; }
-.head { font-weight: 800; }
+.hotel { margin: 6px 0 4px; font-size: 20px; font-weight: 900; }
+.muted { font-size: 14px; font-weight: 700; }
+.meta { display: flex; justify-content: space-between; gap: 6px; margin: 3px 0; font-weight: 700; }
+.rule { margin: 8px 0; border: 0; border-top: 2px dashed #000; }
+.head, .line { display: grid; grid-template-columns: minmax(0, 1.4fr) 32px 58px 64px; gap: 4px; font-weight: 700; }
+.head { font-size: 14px; font-weight: 900; }
+.line { font-size: 15px; }
+.line span:first-child { overflow-wrap: anywhere; }
 .line span:nth-child(n+2), .head span:nth-child(n+2) { text-align: right; }
-.totals { display: flex; justify-content: space-between; gap: 8px; }
-.grand { margin-top: 8px; text-align: center; font-size: 16px; font-weight: 800; }
-.thanks { margin-top: 10px; text-align: center; font-weight: 700; }
+.totals { display: flex; justify-content: space-between; gap: 8px; font-size: 15px; font-weight: 800; }
+.grand { margin: 10px 0 0; text-align: center; font-size: 20px; font-weight: 900; }
+.thanks { margin: 12px 0 0; text-align: center; font-size: 16px; font-weight: 900; }
+.feed { margin: 0; padding: 22px 0 10px; text-align: center; font-size: 18px; font-weight: 900; letter-spacing: 3px; }
 </style></head><body>
 <main class="receipt">
   ${duplicate ? '<p class="center muted">Duplicate</p>' : '<p class="center muted">Original</p>'}
@@ -126,7 +135,7 @@ html, body { width: 80mm; max-width: 80mm; min-width: 80mm; margin: 0; padding: 
   <p>Name: ${escapeHtml(invoice.customer_name?.trim() || '-')}</p>
   <div class="meta"><span>Date: ${date}</span><span>${escapeHtml(serviceLabel)}: ${escapeHtml(tableName)}</span></div>
   <div class="meta"><span>Time: ${time}</span></div>
-  <div class="meta"><span>Cashier: ${escapeHtml(cashier)}</span><span>Bill No: ${escapeHtml(invoice.invoice_number)}</span></div>
+  <div class="meta"><span>Cashier: cashier</span><span>Bill No: ${escapeHtml(invoice.invoice_number)}</span></div>
   <hr class="rule" />
   <div class="head"><span>Item</span><span>Qty</span><span>Price</span><span>Amount</span></div>
   ${itemRows}
@@ -136,6 +145,7 @@ html, body { width: 80mm; max-width: 80mm; min-width: 80mm; margin: 0; padding: 
   ${discount > 0 ? `<div class="totals"><span></span><span>Discount ${moneyPlain(discount)}</span></div>` : ''}
   <p class="grand">Grand Total ₹ ${moneyPlain(grand)}</p>
   <p class="thanks">Thank You!!! Visit Again.</p>
+  <p class="feed"><br><br><br><br>****</p>
 </main>
 <script>window.addEventListener('load', function () { window.focus(); window.print(); window.addEventListener('afterprint', function () { window.close() }) })</script>
 </body></html>`
