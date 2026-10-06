@@ -11,6 +11,12 @@ export const unwrap = <T,>(response: { data: ApiEnvelope<T> }) => response.data.
 export function isParcelTable(table?: Pick<DiningTable, 'service_type'> | null) {
   return table?.service_type === 'parcel'
 }
+export function compareTables(left: Pick<DiningTable, 'name' | 'service_type'>, right: Pick<DiningTable, 'name' | 'service_type'>) {
+  const leftParcel = isParcelTable(left) ? 1 : 0
+  const rightParcel = isParcelTable(right) ? 1 : 0
+  if (leftParcel !== rightParcel) return leftParcel - rightParcel
+  return left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' })
+}
 export function isPrimaryMergedTable(table: DiningTable) {
   return !table.primary_table || table.primary_table.id === table.id
 }
