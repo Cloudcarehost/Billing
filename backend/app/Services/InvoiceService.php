@@ -36,6 +36,7 @@ class InvoiceService
                 $session->joinedTables()->detach();
             }
             ReportService::invalidateDashboard($invoice->hotel_id);
+            OpenBillSnapshotService::queue($invoice->hotel_id);
 
             return $invoice->fresh()->load('diningSession.diningTable');
         });
@@ -66,6 +67,7 @@ class InvoiceService
                 'voided' => true,
                 'session_status' => 'occupied',
             ]);
+            OpenBillSnapshotService::queue($invoice->hotel_id);
 
             return $session->fresh()->load('diningTable', 'waiter', 'orders.items', 'invoice');
         });

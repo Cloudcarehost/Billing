@@ -58,4 +58,13 @@ REVERB_SCHEME=https
 REVERB_SERVER_HOST=0.0.0.0
 REVERB_SERVER_PORT=8080
 REVERB_ALLOWED_ORIGINS=https://your-frontend-domain.com
+
+# Emergency open-bills copy (optional). Staff open this spreadsheet if the website is down.
+# 1. Google Cloud → service account → enable Google Sheets API
+# 2. Create one spreadsheet, share it Editor with the service-account email
+# 3. Put the JSON key on the server (never commit it)
+# 4. php artisan aswad:sync-open-bills   (once, then orders keep it updated via aswad-queue)
+GOOGLE_SHEETS_ENABLED=true
+GOOGLE_SHEETS_SPREADSHEET_ID=your-spreadsheet-id
+GOOGLE_SHEETS_CREDENTIALS_PATH=/var/www/Billing/backend/storage/app/google-service-account.json
 ```

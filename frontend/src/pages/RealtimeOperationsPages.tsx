@@ -20,7 +20,7 @@ export function OrdersPage() {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const [tables, setTables] = useState<DiningTable[]>([])
-  const { data: products = [] } = useQuery({ queryKey: ['order-products', activeOutletId], queryFn: async () => unwrap(await api.get<ApiEnvelope<Product[]>>('/api/v1/products/search', { params: { active: 1, limit: 500 } })), staleTime: 5 * 60_000 })
+  const { data: products = [] } = useQuery({ queryKey: ['order-products', activeOutletId], queryFn: async () => unwrap(await api.get<ApiEnvelope<Product[]>>('/api/v1/products/search', { params: { active: 1, limit: 2000 } })), staleTime: 5 * 60_000 })
   const { data: popular = [] } = useQuery({ queryKey: ['order-popular', activeOutletId], queryFn: async () => activeOutletId ? unwrap(await api.get<ApiEnvelope<PopularProduct[]>>('/api/v1/products/popular', { params: { outlet_id: activeOutletId, days: 14, limit: 8 } })) : [], enabled: Boolean(activeOutletId), staleTime: 5 * 60_000, placeholderData: [] })
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null)
   const [search, setSearch] = useState(params.get('q') ?? '')

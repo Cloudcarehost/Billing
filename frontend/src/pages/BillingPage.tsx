@@ -30,7 +30,7 @@ export function BillingPage() {
   const [chargedToUserId, setChargedToUserId] = useState('')
   const [closeWithoutSaleOpen, setCloseWithoutSaleOpen] = useState(false)
   const [closeWithoutSaleReason, setCloseWithoutSaleReason] = useState('')
-  const [excludeTarget, setExcludeTarget] = useState<{ group: BillLineGroup<OrderItem>; quantity: string; reason: string } | null>(null)
+  const [excludeTarget, setExcludeTarget] = useState<{ group: BillLineGroup<OrderItem>; quantity: string } | null>(null)
   const [guest, setGuest] = useState({ customer_name: '', customer_phone: '', customer_email: '', customer_gstin: '' })
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
@@ -150,10 +150,9 @@ export function BillingPage() {
     } finally { setBusy(false) }
   }
   const requestBill = async () => { if (!selectedSession || busy) return; setBusy(true); try { const updated = unwrap(await api.post<ApiEnvelope<DiningSession>>(`/api/v1/dining-sessions/${selectedSession.id}/request-bill`)); setSelectedSession(updated); setNotice('Ready to apply discount and create the bill.') } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) } }
-  const cancelLine = async () => {
-    if (!excludeTarget || excludeTarget.reason.trim().length < 3) return
-    const qty = value(excludeTarget.quantity)
-    const cancellable = excludeTarget.group.items.filter((item) => canCancelItem(session, item))
+  const cancelLine = async (group: BillLineGroup<OrderItem>, rawQty: string) => {
+    const qty = value(rawQty)
+    const cancellable = group.items.filter((item) => canCancelItem(session, item))
     const units = takeExcludeUnits(cancellable, qty)
     if (qty <= 0 || units.reduce((sum, unit) => sum + unit.quantity, 0) < qty) {
       setError('You can only exclude a quantity you are allowed to cancel.')
@@ -163,12 +162,12 @@ export function BillingPage() {
     try {
       for (const unit of units) {
         const whole = Math.abs(unit.quantity - Number(unit.item.quantity)) < 0.0005
-        await api.post(`/api/v1/order-items/${unit.item.id}/cancel`, whole ? { reason: excludeTarget.reason.trim() } : { reason: excludeTarget.reason.trim(), quantity: unit.quantity })
+        await api.post(`/api/v1/order-items/${unit.item.id}/cancel`, whole ? { reason: 'Excluded from bill' } : { reason: 'Excluded from bill', quantity: unit.quantity })
       }
       setExcludeTarget(null)
       if (selectedSession) await loadSelected(selectedSession.id)
       await loadTables()
-      setNotice(`${qtyLabel(qty)} × ${excludeTarget.group.item_name} removed from this bill.`)
+      setNotice(`${qtyLabel(qty)} × ${group.item_name} removed from this bill.`)
     } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) }
   }
   const addUnit = async (group: BillLineGroup<OrderItem>) => {
@@ -233,7 +232,7 @@ export function BillingPage() {
       <span>{money(group.unit_price, session?.hotel.currency_code)}</span>
       <strong>{money(group.line_total, session?.hotel.currency_code)}</strong>
       {(canExclude || canAdd) && <span className="bill-line-actions">
-        {canExclude && <button type="button" className="text-danger" title={`Exclude ${group.item_name}`} onClick={() => setExcludeTarget({ group, quantity: '1', reason: '' })}><X size={15} /></button>}
+        {canExclude && <button type="button" className="text-danger" title={`Exclude ${group.item_name}`} onClick={() => group.quantity > 1 ? setExcludeTarget({ group, quantity: '1' }) : void cancelLine(group, '1')}><X size={15} /></button>}
         {canAdd && <button type="button" className="text-add" title={`Add ${group.item_name}`} onClick={() => void addUnit(group)}><Plus size={15} /></button>}
       </span>}
     </div>
@@ -267,7 +266,7 @@ export function BillingPage() {
         {value(selectedSession.total_amount) === 0 ? can(session, 'billing.close_without_sale') ? <button type="button" className="button button-secondary button-full close-without-sale" disabled={busy || selectedSession.status !== 'pending_bill'} onClick={() => setCloseWithoutSaleOpen(true)}><Undo2 size={16} />{selectedSession.status === 'pending_bill' ? 'Close without sale' : 'Request bill first'}</button> : <p className="zero-sale-message">This zero-value session requires an authorized user to close it without a sale.</p> : <button type="button" className="button button-primary button-full" disabled={busy || selectedSession.status !== 'pending_bill'} onClick={() => void createInvoice()}><ReceiptText size={16} />{busy ? 'Creating…' : 'Create final bill'}</button>}
       </>}</main></div>
     <Modal open={closeWithoutSaleOpen} title="Close without sale" onClose={() => !busy && setCloseWithoutSaleOpen(false)}><p className="modal-intro">No invoice will be created. The table will become available and this reason will remain in the audit log.</p><label className="field"><span>Required reason</span><textarea rows={4} maxLength={1000} value={closeWithoutSaleReason} onChange={(event) => setCloseWithoutSaleReason(event.target.value)} placeholder="For example: all items cancelled before preparation" /></label><div className="form-action-row"><button type="button" className="button button-secondary" disabled={busy} onClick={() => setCloseWithoutSaleOpen(false)}>Cancel</button><button type="button" className="button button-primary" disabled={busy || closeWithoutSaleReason.trim().length < 3} onClick={() => void closeWithoutSale()}>{busy ? 'Closing…' : 'Close table'}</button></div></Modal>
-    <Modal open={Boolean(excludeTarget)} title={`Exclude ${excludeTarget?.group.item_name ?? 'item'}?`} description="Cancelled quantity stays in history. The rest remains on the bill." onClose={() => !busy && setExcludeTarget(null)}>{excludeTarget && <><p className="modal-intro">{excludeTarget.group.quantity > 1 ? `${qtyLabel(excludeTarget.group.quantity)} on this bill. Choose how many to exclude.` : 'This is the only remaining unit of this item.'}</p>{excludeTarget.group.quantity > 1 && <label className="field"><span>Quantity to exclude</span><input type="number" min={1} max={excludeTarget.group.quantity} step="1" value={excludeTarget.quantity} onChange={(event) => setExcludeTarget({ ...excludeTarget, quantity: event.target.value })} /></label>}<label className="field"><span>Required reason</span><textarea rows={3} maxLength={1000} value={excludeTarget.reason} onChange={(event) => setExcludeTarget({ ...excludeTarget, reason: event.target.value })} /></label><div className="form-action-row"><button type="button" className="button button-secondary" disabled={busy} onClick={() => setExcludeTarget(null)}>Cancel</button><button type="button" className="button button-primary" disabled={busy || excludeTarget.reason.trim().length < 3 || value(excludeTarget.quantity) < 1 || value(excludeTarget.quantity) > excludeTarget.group.quantity} onClick={() => void cancelLine()}>{busy ? 'Saving…' : 'Exclude'}</button></div></>}</Modal>
+    <Modal open={Boolean(excludeTarget)} title={`Exclude ${excludeTarget?.group.item_name ?? 'item'}?`} description="Cancelled quantity stays in history. The rest remains on the bill." onClose={() => !busy && setExcludeTarget(null)}>{excludeTarget && <><p className="modal-intro">{qtyLabel(excludeTarget.group.quantity)} on this bill. Choose how many to exclude.</p><label className="field"><span>Quantity to exclude</span><input type="number" min={1} max={excludeTarget.group.quantity} step="1" value={excludeTarget.quantity} onChange={(event) => setExcludeTarget({ ...excludeTarget, quantity: event.target.value })} /></label><div className="form-action-row"><button type="button" className="button button-secondary" disabled={busy} onClick={() => setExcludeTarget(null)}>Cancel</button><button type="button" className="button button-primary" disabled={busy || value(excludeTarget.quantity) < 1 || value(excludeTarget.quantity) > excludeTarget.group.quantity} onClick={() => void cancelLine(excludeTarget.group, excludeTarget.quantity)}>{busy ? 'Saving…' : 'Exclude'}</button></div></>}</Modal>
     <Toast message={error || notice} tone={error ? 'error' : 'success'} onDismiss={() => { setNotice(''); setError('') }} />
   </section>
 }

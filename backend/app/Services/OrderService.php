@@ -46,6 +46,7 @@ class OrderService
                 'quantity' => $cancelled->quantity,
                 'kitchen_item' => RestaurantRealtime::kitchenItem($cancelled),
             ], $cancelled->order_id, $cancelled->id, $cancelled->kitchen_station_id);
+            OpenBillSnapshotService::queue($session->hotel_id);
 
             return $cancelled->fresh();
         });

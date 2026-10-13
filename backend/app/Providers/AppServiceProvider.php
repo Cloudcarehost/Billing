@@ -10,6 +10,8 @@ use App\Policies\HotelPolicy;
 use App\Policies\OutletPolicy;
 use App\Policies\RolePolicy;
 use App\Policies\UserPolicy;
+use App\Services\GoogleSheetsApiClient;
+use App\Services\GoogleSheetsWriter;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
@@ -24,7 +26,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->app->singleton(GoogleSheetsWriter::class, GoogleSheetsApiClient::class);
     }
 
     /**

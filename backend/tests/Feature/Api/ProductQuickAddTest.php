@@ -51,6 +51,43 @@ class ProductQuickAddTest extends TestCase
         $this->assertSame(12, Product::query()->where('is_quick', true)->count());
     }
 
+    public function test_product_index_returns_the_full_catalog_beyond_one_hundred_and_search_finds_later_items(): void
+    {
+        [$owner, $hotel] = $this->ownerContext();
+        $now = now();
+        Product::query()->insert(array_map(fn (int $index) => [
+            'hotel_id' => $hotel->id,
+            'name' => sprintf('Catalog item %03d', $index),
+            'sku' => sprintf('SKU-%03d', $index),
+            'unit' => 'item',
+            'selling_price' => 10,
+            'cost_price' => 0,
+            'tax_rate' => 0,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ], range(1, 120)));
+
+        $this->actingAs($owner, 'web')->getJson('/api/v1/products?per_page=2000')
+            ->assertOk()
+            ->assertJsonPath('meta.total', 120)
+            ->assertJsonPath('meta.last_page', 1)
+            ->assertJsonCount(120, 'data');
+
+        $this->actingAs($owner, 'web')->getJson('/api/v1/products?per_page=100')
+            ->assertOk()
+            ->assertJsonPath('meta.total', 120)
+            ->assertJsonPath('meta.last_page', 2)
+            ->assertJsonCount(100, 'data');
+
+        $this->actingAs($owner, 'web')->getJson('/api/v1/products?q=Catalog%20item%20120')
+            ->assertOk()
+            ->assertJsonPath('data.0.name', 'Catalog item 120');
+
+        $this->actingAs($owner, 'web')->getJson('/api/v1/products/search?q=Catalog%20item%20120&limit=2000')
+            ->assertOk()
+            ->assertJsonPath('data.0.name', 'Catalog item 120');
+    }
+
     public function test_popular_ranks_by_quantity_for_the_requested_outlet_and_ignores_voided_bills(): void
     {
         [$owner, $hotel] = $this->ownerContext();

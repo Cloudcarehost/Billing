@@ -20,7 +20,28 @@ export function MenuPage() {
   const [editing, setEditing] = useState<Product | null>(null); const [editingCategory, setEditingCategory] = useState<Category | null>(null); const [editingStation, setEditingStation] = useState<KitchenStation | null>(null)
   const [deleting, setDeleting] = useState<DeleteTarget>(null)
   const [params] = useSearchParams(); const [query, setQuery] = useState(params.get('q') ?? '')
-  const load = useCallback(async () => { try { const [categoryData, stationData, productData] = await Promise.all([api.get<ApiEnvelope<Category[]>>('/api/v1/categories'), api.get<ApiEnvelope<KitchenStation[]>>('/api/v1/kitchen-stations'), api.get<Paginated<Product>>('/api/v1/products?per_page=100')]); setCategories(categoryData.data.data); setStations(stationData.data.data); setProducts(productData.data.data); if (can(session, 'settings.manage')) { const outletData = await api.get<ApiEnvelope<Outlet[]>>('/api/v1/outlets'); setOutlets(outletData.data.data) } } catch (err) { setError(errorMessage(err)) } }, [session])
+  const load = useCallback(async () => {
+    try {
+      const [categoryData, stationData, firstPage] = await Promise.all([
+        api.get<ApiEnvelope<Category[]>>('/api/v1/categories'),
+        api.get<ApiEnvelope<KitchenStation[]>>('/api/v1/kitchen-stations'),
+        api.get<Paginated<Product>>('/api/v1/products', { params: { per_page: 2000, page: 1 } }),
+      ])
+      const catalog = [...firstPage.data.data]
+      const lastPage = Number(firstPage.data.meta?.last_page ?? 1)
+      for (let page = 2; page <= lastPage; page++) {
+        const next = await api.get<Paginated<Product>>('/api/v1/products', { params: { per_page: 2000, page } })
+        catalog.push(...next.data.data)
+      }
+      setCategories(categoryData.data.data)
+      setStations(stationData.data.data)
+      setProducts(catalog)
+      if (can(session, 'settings.manage')) {
+        const outletData = await api.get<ApiEnvelope<Outlet[]>>('/api/v1/outlets')
+        setOutlets(outletData.data.data)
+      }
+    } catch (err) { setError(errorMessage(err)) }
+  }, [session])
   useEffect(() => { const task = window.setTimeout(() => { void load() }, 0); return () => window.clearTimeout(task) }, [load])
   function openPanel(next: 'product' | 'category' | 'station') {
     setError(''); setSuccess('')

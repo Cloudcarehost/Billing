@@ -20,12 +20,12 @@ class ProductController extends ApiController
 {
     public function index(Request $request): JsonResponse
     {
-        return $this->paginated($this->query($request)->paginate(min((int) $request->integer('per_page', 25), 100)));
+        return $this->paginated($this->query($request)->paginate(min(max((int) $request->integer('per_page', 25), 1), 2000)));
     }
 
     public function search(Request $request): JsonResponse
     {
-        return $this->success($this->query($request)->limit(min((int) $request->integer('limit', 20), 500))->get());
+        return $this->success($this->query($request)->limit(min(max((int) $request->integer('limit', 20), 1), 2000))->get());
     }
 
     public function popular(Request $request, ReportService $reports): JsonResponse

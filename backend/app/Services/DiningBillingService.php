@@ -3,8 +3,8 @@
 namespace App\Services;
 
 use App\Enums\FulfillmentMode;
-use App\Enums\OutletOrderFlow;
 use App\Enums\InvoiceStatus;
+use App\Enums\OutletOrderFlow;
 use App\Enums\PaymentStatus;
 use App\Enums\PaymentType;
 use App\Enums\TaxType;
@@ -48,6 +48,7 @@ class DiningBillingService
             $session = DiningSession::query()->create(['hotel_id' => $table->outlet->hotel_id, 'outlet_id' => $table->outlet_id, 'dining_table_id' => $table->id, 'waiter_id' => $data['waiter_id'] ?? $user->id, 'customer_id' => $data['customer_id'] ?? null, 'guest_count' => $data['guest_count'] ?? 1, 'notes' => $data['notes'] ?? null, 'status' => 'occupied']);
             ReportService::invalidateDashboard($session->hotel_id);
             RestaurantUpdated::dispatch('session_opened', $session->hotel_id, $session->outlet_id, $session->dining_table_id, $session->id, null, null, $session->waiter_id, null, RestaurantRealtime::payload($session->load('diningTable', 'waiter')));
+            OpenBillSnapshotService::queue($session->hotel_id);
 
             return $session;
         });
@@ -129,6 +130,7 @@ class DiningBillingService
             $this->recalculate($session);
             $session = $session->fresh()->load('diningTable', 'waiter', 'joinedTables:id,name,code', 'orders.items');
             RestaurantRealtime::dispatchToMembers('tables_merged', $session);
+            OpenBillSnapshotService::queue($session->hotel_id);
 
             return $session;
         });
@@ -156,6 +158,7 @@ class DiningBillingService
             ]));
             $session = $session->fresh()->load('diningTable', 'waiter', 'joinedTables:id,name,code', 'orders.items');
             RestaurantRealtime::dispatchToMembers('tables_merged', $session);
+            OpenBillSnapshotService::queue($session->hotel_id);
 
             return $session;
         });
@@ -216,6 +219,7 @@ class DiningBillingService
                 $payload['live_ticket'] = RestaurantRealtime::liveTicket($order);
             }
             RestaurantRealtime::dispatchToMembers('order_sent', $session, $payload, $order->id);
+            OpenBillSnapshotService::queue($session->hotel_id);
 
             return $session->fresh();
         });
@@ -273,6 +277,7 @@ class DiningBillingService
             $session->update(['status' => 'pending_bill']);
             ReportService::invalidateDashboard($session->hotel_id);
             RestaurantRealtime::dispatchToMembers('bill_requested', $session->load('diningTable', 'waiter', 'joinedTables:id,name', 'orders.items'));
+            OpenBillSnapshotService::queue($session->hotel_id);
 
             return $session->fresh();
         });
@@ -371,6 +376,7 @@ class DiningBillingService
                 ]);
             }
             $session->refreshTotals();
+            OpenBillSnapshotService::queue($session->hotel_id);
 
             return $session->fresh();
         });
@@ -490,7 +496,7 @@ class DiningBillingService
     {
         $blank = static fn (mixed $value): ?string => filled($value) ? trim((string) $value) : null;
         $customerId = $guest['customer_id'] ?? $session?->customer_id ?? $invoice?->customer_id;
-            $customer = $customerId ? Customer::query()->find($customerId) : ($session?->customer ?? $invoice?->customer);
+        $customer = $customerId ? Customer::query()->find($customerId) : ($session?->customer ?? $invoice?->customer);
 
         return [
             'customer_id' => $customer?->id,
@@ -530,6 +536,7 @@ class DiningBillingService
             RestaurantUpdated::dispatch('table_closed', $session->hotel_id, $session->outlet_id, $tableId, $session->id, null, null, $session->waiter_id, null, $payload);
         }
         $session->joinedTables()->detach();
+        OpenBillSnapshotService::queue($session->hotel_id);
     }
 
     /** @return array<int, float|int> */
