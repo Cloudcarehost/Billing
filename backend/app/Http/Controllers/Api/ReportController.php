@@ -7,6 +7,7 @@ use App\Models\Hotel;
 use App\Models\Invoice;
 use App\Models\Outlet;
 use App\Models\ReportExport;
+use App\Services\FinanceService;
 use App\Services\ReportService;
 use App\Support\HotelDate;
 use Illuminate\Http\JsonResponse;
@@ -20,6 +21,13 @@ class ReportController extends ApiController
         $hotel = $request->attributes->get('currentHotel');
 
         return $this->success($reports->dashboard($hotel, $this->filters($request, $hotel)));
+    }
+
+    public function overview(Request $request, ReportService $reports, FinanceService $finance): JsonResponse
+    {
+        $hotel = $request->attributes->get('currentHotel');
+
+        return $this->success($reports->businessOverview($hotel, $this->filters($request, $hotel), $finance));
     }
 
     public function invoices(Request $request, ReportService $reports): JsonResponse
@@ -40,7 +48,7 @@ class ReportController extends ApiController
     public function export(Request $request): JsonResponse
     {
         $hotel = $request->attributes->get('currentHotel');
-        $data = $request->validate(['type' => ['required', 'in:invoice_register,payment_reconciliation,inventory_movements,tax_summary'], 'format' => ['required', 'in:csv,pdf'], 'filters' => ['nullable', 'array']]);
+        $data = $request->validate(['type' => ['required', 'in:invoice_register,payment_reconciliation,inventory_movements,tax_summary,business_overview'], 'format' => ['required', 'in:csv,pdf'], 'filters' => ['nullable', 'array']]);
         $export = ReportExport::query()->create(['hotel_id' => $hotel->id, 'requested_by' => $request->user()->id, 'type' => $data['type'], 'format' => $data['format'], 'filters' => $data['filters'] ?? [], 'status' => 'queued', 'expires_at' => now()->addDays(7)]);
         GenerateReportExport::dispatch($export->id);
 
@@ -65,7 +73,7 @@ class ReportController extends ApiController
 
     private function filters(Request $request, Hotel $hotel): array
     {
-        $data = $request->validate(['period' => ['nullable', 'in:today,week,month,year'], 'from' => ['nullable', 'date'], 'to' => ['nullable', 'date', 'after_or_equal:from'], 'outlet_id' => ['nullable', 'integer']]);
+        $data = $request->validate(['period' => ['nullable', 'in:today,yesterday,last_7,week,month,last_month,year'], 'from' => ['nullable', 'date'], 'to' => ['nullable', 'date', 'after_or_equal:from'], 'outlet_id' => ['nullable', 'integer']]);
         $today = HotelDate::businessDate($hotel);
         if (empty($data['from']) && ! empty($data['period'])) {
             [$data['from'], $data['to']] = HotelDate::rangeForPeriod($hotel, $data['period']);
@@ -74,8 +82,11 @@ class ReportController extends ApiController
         $data['to'] ??= $data['from'];
         if (! empty($data['outlet_id'])) {
             Outlet::query()->where('hotel_id', $request->attributes->get('currentHotel')->id)->whereIn('id', $request->attributes->get('accessibleOutletIds', []))->findOrFail($data['outlet_id']);
+            $data['outlet_id'] = (int) $data['outlet_id'];
         } elseif ($request->attributes->get('currentOutletId')) {
             $data['outlet_id'] = $request->attributes->get('currentOutletId');
+        } else {
+            $data['outlet_id'] = null;
         }
 
         return $data;

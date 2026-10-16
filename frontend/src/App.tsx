@@ -16,7 +16,7 @@ const BillingPage = lazy(() => import('./pages/BillingPage').then((module) => ({
 const PreviousBillsPage = lazy(() => import('./pages/PreviousBillsPage').then((module) => ({ default: module.PreviousBillsPage })))
 const InventoryPage = lazy(() => import('./pages/PhaseThreePages').then((module) => ({ default: module.InventoryPage })))
 const LiveDashboardPage = lazy(() => import('./pages/PhaseThreePages').then((module) => ({ default: module.LiveDashboardPage })))
-const ReportsPage = lazy(() => import('./pages/PhaseThreePages').then((module) => ({ default: module.ReportsPage })))
+const ReportsPage = lazy(() => import('./pages/ReportsPage').then((module) => ({ default: module.ReportsPage })))
 const MoneyPage = lazy(() => import('./pages/MoneyPage').then((module) => ({ default: module.MoneyPage })))
 const AccountSecurityPage = lazy(() => import('./pages/SettingsPages').then((module) => ({ default: module.AccountSecurityPage })))
 const HotelSettingsPage = lazy(() => import('./pages/SettingsPages').then((module) => ({ default: module.HotelSettingsPage })))

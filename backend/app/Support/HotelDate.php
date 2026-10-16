@@ -42,11 +42,30 @@ class HotelDate
         $day = self::businessDay($hotel, $at);
 
         return match ($period) {
+            'yesterday' => [$day->subDay()->toDateString(), $day->subDay()->toDateString()],
+            'last_7' => [$day->subDays(6)->toDateString(), $day->toDateString()],
             'week' => [$day->startOfWeek()->toDateString(), $day->endOfWeek()->toDateString()],
             'month' => [$day->startOfMonth()->toDateString(), $day->endOfMonth()->toDateString()],
+            'last_month' => [$day->subMonthNoOverflow()->startOfMonth()->toDateString(), $day->subMonthNoOverflow()->endOfMonth()->toDateString()],
             'year' => [$day->startOfYear()->toDateString(), $day->endOfYear()->toDateString()],
             default => [$day->toDateString(), $day->toDateString()],
         };
+    }
+
+    /** @return array{0: string, 1: string} */
+    public static function previousRange(string $from, string $to, ?string $period = null): array
+    {
+        $start = CarbonImmutable::parse($from)->startOfDay();
+        $end = CarbonImmutable::parse($to)->startOfDay();
+        if (in_array($period, ['month', 'last_month'], true)) {
+            $previous = $start->subMonthNoOverflow();
+
+            return [$previous->startOfMonth()->toDateString(), $previous->endOfMonth()->toDateString()];
+        }
+        $days = $start->diffInDays($end) + 1;
+        $previousTo = $start->subDay();
+
+        return [$previousTo->subDays($days - 1)->toDateString(), $previousTo->toDateString()];
     }
 
     /** @return array{0: int, 1: int} */

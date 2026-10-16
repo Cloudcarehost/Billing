@@ -6,6 +6,7 @@ use App\Models\Invoice;
 use App\Models\Payment;
 use App\Models\ReportExport;
 use App\Models\StockMovement;
+use App\Services\FinanceService;
 use App\Services\ReportService;
 use App\Support\HotelDate;
 use Dompdf\Dompdf;
@@ -24,17 +25,28 @@ class GenerateReportExport implements ShouldQueue
 
     public function __construct(public readonly int $exportId) {}
 
-    public function handle(ReportService $reports): void
+    public function handle(ReportService $reports, FinanceService $finance): void
     {
         $export = ReportExport::query()->with('requester')->findOrFail($this->exportId);
         $export->update(['status' => 'processing']);
         try {
             $today = HotelDate::businessDate($export->hotel);
-        $filters = ['from' => $today, 'to' => $today] + ($export->filters ?? []);
+            $filters = $export->filters ?? [];
+            if (empty($filters['from']) && ! empty($filters['period'])) {
+                [$filters['from'], $filters['to']] = HotelDate::rangeForPeriod($export->hotel, $filters['period']);
+            }
+            $filters['from'] ??= $today;
+            $filters['to'] ??= $filters['from'];
+            if (! empty($filters['outlet_id'])) {
+                $filters['outlet_id'] = (int) $filters['outlet_id'];
+            } else {
+                unset($filters['outlet_id']);
+            }
             $rows = match ($export->type) {
                 'invoice_register' => $reports->invoiceRegister($export->hotel, $filters)->map(fn ($invoice) => [$invoice->invoice_number, $invoice->business_date->toDateString(), $invoice->outlet?->name, $invoice->status, $invoice->payment_status, $invoice->subtotal, $invoice->tax_amount, $invoice->total_amount, $invoice->paid_amount, $invoice->balance_amount]),
                 'payment_reconciliation' => Payment::query()->whereHas('invoice', fn ($query) => $query->where('hotel_id', $export->hotel_id))->whereBetween('paid_at', [$filters['from'].' 00:00:00', $filters['to'].' 23:59:59'])->get()->map(fn ($payment) => [$payment->invoice_id, $payment->type, $payment->method, $payment->amount, $payment->reference_number, $payment->paid_at]),
                 'inventory_movements' => StockMovement::query()->whereHas('stock.outlet', fn ($query) => $query->where('hotel_id', $export->hotel_id))->with('stock.product', 'stock.outlet')->latest('occurred_at')->get()->map(fn ($movement) => [$movement->occurred_at, $movement->stock?->outlet?->name, $movement->stock?->product?->name, $movement->type, $movement->quantity_delta, $movement->balance_after, $movement->unit_cost, $movement->reason]),
+                'business_overview' => $reports->businessOverviewExport($export->hotel, $filters, $finance),
                 default => Invoice::query()->where('hotel_id', $export->hotel_id)->whereBetween('business_date', [$filters['from'], $filters['to']])->where('status', 'issued')->get()->map(fn ($invoice) => [$invoice->business_date, $invoice->invoice_number, $invoice->tax_amount, $invoice->cgst_amount, $invoice->sgst_amount, $invoice->igst_amount]),
             };
             $basePath = 'exports/hotel-'.$export->hotel_id.'/'.str($export->type.'-'.$export->id)->slug();

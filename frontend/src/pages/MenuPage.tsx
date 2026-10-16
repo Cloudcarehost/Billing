@@ -1,5 +1,5 @@
 import { CirclePlus, CookingPot, PackagePlus, Pencil, Pin, Search, Trash2, UtensilsCrossed } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ConfirmDialog } from '../components/ui/Feedback'
@@ -20,6 +20,7 @@ export function MenuPage() {
   const [editing, setEditing] = useState<Product | null>(null); const [editingCategory, setEditingCategory] = useState<Category | null>(null); const [editingStation, setEditingStation] = useState<KitchenStation | null>(null)
   const [deleting, setDeleting] = useState<DeleteTarget>(null)
   const [params] = useSearchParams(); const [query, setQuery] = useState(params.get('q') ?? '')
+  const [categoryFilter, setCategoryFilter] = useState<number | 'all'>('all')
   const load = useCallback(async () => {
     try {
       const [categoryData, stationData, firstPage] = await Promise.all([
@@ -94,7 +95,15 @@ export function MenuPage() {
       await load()
     } catch (err) { setError(errorMessage(err)); setDeleting(null) }
   }
-  const filtered = products.filter((product) => `${product.name} ${product.sku ?? ''} ${product.barcode ?? ''}`.toLowerCase().includes(query.toLowerCase()))
+  const menuCategories = useMemo(() => {
+    const named = categories.filter((category) => products.some((product) => product.category_id === category.id)).map((category) => ({ id: category.id, name: category.name }))
+    const hasUncategorized = products.some((product) => !product.category_id)
+    return hasUncategorized ? [...named, { id: 0, name: 'Uncategorized' }] : named
+  }, [categories, products])
+  const filtered = products.filter((product) => {
+    const matchesCategory = categoryFilter === 'all' || (categoryFilter === 0 ? !product.category_id : product.category_id === categoryFilter)
+    return matchesCategory && `${product.name} ${product.sku ?? ''} ${product.barcode ?? ''}`.toLowerCase().includes(query.toLowerCase())
+  })
   return <>
     <Heading eyebrow="CATALOG" title="Menu & products" text="Keep prices, tax and kitchen routing accurate. Inventory tracking is optional and never blocks orders." action={manage ? <div className="heading-actions"><button className="button button-secondary" type="button" onClick={() => openPanel('category')}><CirclePlus size={16} />Category</button>{outlets.length > 0 && <button className="button button-secondary" type="button" onClick={() => openPanel('station')}><CookingPot size={16} />Station</button>}<button className="button button-primary" type="button" onClick={() => { setEditing(null); openPanel('product') }}><PackagePlus size={16} />Add product</button></div> : undefined} />
     {panel === 'product' && <form className="settings-card compact-form" onSubmit={saveProduct}>
@@ -160,6 +169,10 @@ export function MenuPage() {
       {manage && outlets.length > 0 ? <button type="button" onClick={() => openPanel('station')}><strong>{stations.length}</strong><span>Kitchen stations — edit or delete</span></button> : <div><strong>{stations.length}</strong><span>Kitchen stations</span></div>}
     </section>
     <label className="catalog-search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, SKU or barcode" /></label>
+    {menuCategories.length > 0 && <div className="category-tabs catalog-category-tabs" role="tablist" aria-label="Menu categories">
+      <button type="button" className={categoryFilter === 'all' ? 'selected' : ''} onClick={() => setCategoryFilter('all')}>All menu</button>
+      {menuCategories.map((entry) => <button type="button" key={entry.id} className={categoryFilter === entry.id ? 'selected' : ''} onClick={() => setCategoryFilter((current) => current === entry.id ? 'all' : entry.id)}>{entry.name}</button>)}
+    </div>}
     <section className="product-grid">{filtered.map((product) => <article className="product-card" key={product.id}><div className="product-card-top"><span className="product-icon"><UtensilsCrossed size={20} /></span><div className="product-card-flags">{product.is_quick ? <span className="quick-pin-badge" title="Pinned on order screen"><Pin size={12} />Pinned</span> : null}<span className={product.is_active ? 'status-badge status-green' : 'status-badge status-red'}>{product.is_active ? 'Active' : 'Inactive'}</span></div></div><h2>{product.name}{product.serving_size && <small> · {product.serving_size}</small>}</h2>{product.short_description && <p>{product.short_description}</p>}<p>{product.category?.name ?? 'Uncategorized'} · {product.fulfillment_mode === 'kitchen' ? `Kitchen · ${product.kitchen_station?.name ?? 'Station required'}` : 'Direct service'}</p><strong className="product-price">{money(product.selling_price, session?.hotel.currency_code)}</strong><small>Tax {product.tax_rate}% · {product.track_inventory ? 'Inventory tracked' : 'No inventory tracking'}</small>{manage && <button className="text-action" onClick={() => { setEditing(product); openPanel('product') }}><Pencil size={14} />Edit product</button>}</article>)}{!filtered.length && <p className="empty-row">No products found.</p>}</section>
     <ConfirmDialog
       open={Boolean(deleting)}

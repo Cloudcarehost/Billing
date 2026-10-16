@@ -15,13 +15,13 @@ use App\Http\Controllers\Api\OnboardingController;
 use App\Http\Controllers\Api\OutletController;
 use App\Http\Controllers\Api\PermissionController;
 use App\Http\Controllers\Api\ProductController;
+use App\Http\Controllers\Api\PublicTableStatusController;
 use App\Http\Controllers\Api\PushSubscriptionController;
 use App\Http\Controllers\Api\RecipeController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\SecurityController;
 use App\Http\Controllers\Api\SupplierController;
-use App\Http\Controllers\Api\PublicTableStatusController;
 use App\Http\Controllers\Api\TablePublicLinkController;
 use App\Http\Controllers\Api\UserController;
 use Illuminate\Support\Facades\Route;
@@ -100,6 +100,7 @@ Route::prefix('v1')->group(function (): void {
         Route::post('inventory/counts/{count}/approve', [InventoryController::class, 'approveCount'])->middleware('owner');
 
         Route::get('dashboard', [ReportController::class, 'dashboard'])->middleware('permission:dashboard.view');
+        Route::get('reports/overview', [ReportController::class, 'overview'])->middleware('permission:reports.view');
         Route::get('reports/invoices', [ReportController::class, 'invoices'])->middleware('permission:reports.view');
         Route::get('reports/payments', [ReportController::class, 'payments'])->middleware('permission:reports.view');
         Route::get('reports/exports', [ReportController::class, 'exports'])->middleware('permission:reports.export');

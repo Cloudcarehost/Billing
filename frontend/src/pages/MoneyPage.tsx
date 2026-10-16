@@ -1,6 +1,7 @@
-import { Banknote, ChevronLeft, ChevronRight, CirclePlus, HandCoins, Pencil, RefreshCw, Trash2, Wallet, WalletCards } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Banknote, ChevronLeft, ChevronRight, CirclePlus, HandCoins, Pencil, Plus, RefreshCw, Trash2, Wallet, WalletCards } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Modal, ConfirmDialog } from '../components/ui/Feedback'
 import { useAuth } from '../features/auth/AuthContext'
 import { can } from '../features/auth/permissions'
@@ -54,6 +55,35 @@ const entryKind = (entry: LedgerEntry) => {
 const isLedger = (entry: LedgerEntry) => entry.editable === true && typeof entry.id === 'number'
 const CATEGORIES = ['Groceries', 'Construction', 'Rent', 'Electricity', 'Other']
 const ENTRY_PAGE_SIZE = 5
+function categoryStorageKey(hotelId?: number) {
+  return hotelId ? `money-what-for:${hotelId}` : ''
+}
+function readStoredCategories(hotelId?: number): string[] {
+  const key = categoryStorageKey(hotelId)
+  if (!key) return []
+  try {
+    const raw = window.localStorage.getItem(key)
+    const parsed = raw ? JSON.parse(raw) as unknown : []
+    return Array.isArray(parsed) ? parsed.map((item) => String(item).trim()).filter(Boolean) : []
+  } catch {
+    return []
+  }
+}
+function uniqueCategories(...groups: Array<Iterable<string>>): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const group of groups) {
+    for (const item of group) {
+      const name = item.trim()
+      if (!name) continue
+      const key = name.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      result.push(name)
+    }
+  }
+  return result
+}
 
 function Heading({ eyebrow, title, text, action }: { eyebrow: string; title: string; text: string; action?: ReactNode }) {
   return <section className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{text}</p></div>{action}</section>
@@ -67,10 +97,15 @@ type BillForm = StandingCost | 'new' | null
 
 export function MoneyPage() {
   const { session } = useAuth()
+  const [searchParams] = useSearchParams()
   const today = session?.hotel.current_business_date ?? new Date().toISOString().slice(0, 10)
-  const [period, setPeriod] = useState('month')
-  const [from, setFrom] = useState(() => rangeForPeriod('month', today)[0])
-  const [to, setTo] = useState(() => rangeForPeriod('month', today)[1])
+  const linkedFrom = searchParams.get('from') ?? ''
+  const linkedTo = searchParams.get('to') ?? ''
+  const linkedCategory = (searchParams.get('category') ?? '').trim()
+  const linkedRange = Boolean(linkedFrom && linkedTo)
+  const [period, setPeriod] = useState(() => linkedRange ? 'custom' : 'month')
+  const [from, setFrom] = useState(() => linkedRange ? linkedFrom : rangeForPeriod('month', today)[0])
+  const [to, setTo] = useState(() => linkedRange ? linkedTo : rangeForPeriod('month', today)[1])
   const [data, setData] = useState<FinanceSummary | null>(null)
   const [bills, setBills] = useState<StandingCost[]>([])
   const [error, setError] = useState('')
@@ -83,6 +118,9 @@ export function MoneyPage() {
   const [deleting, setDeleting] = useState<LedgerEntry | null>(null)
   const [entryType, setEntryType] = useState<'expense' | 'income'>('expense')
   const [category, setCategory] = useState('Groceries')
+  const [customCategories, setCustomCategories] = useState<string[]>(() => readStoredCategories(session?.hotel.id))
+  const [addingCategory, setAddingCategory] = useState(false)
+  const [newCategory, setNewCategory] = useState('')
   const [entryPage, setEntryPage] = useState(1)
   const requestSeq = useRef(0)
   const mayManage = can(session, 'finance.manage')
@@ -114,6 +152,27 @@ export function MoneyPage() {
     }
   }, [query])
   useEffect(() => { const task = window.setTimeout(() => { void load() }, 0); return () => window.clearTimeout(task) }, [load])
+  useEffect(() => { setCustomCategories(readStoredCategories(session?.hotel.id)) }, [session?.hotel.id])
+  function persistCategories(next: string[]) {
+    setCustomCategories(next)
+    const key = categoryStorageKey(session?.hotel.id)
+    if (key) window.localStorage.setItem(key, JSON.stringify(next))
+  }
+  function rememberCategory(name: string) {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    const already = uniqueCategories(CATEGORIES, customCategories).some((item) => item.toLowerCase() === trimmed.toLowerCase())
+    if (already) return
+    persistCategories(uniqueCategories(customCategories, [trimmed]))
+  }
+  function addCategoryChip() {
+    const trimmed = newCategory.trim()
+    if (!trimmed) return
+    rememberCategory(trimmed)
+    setCategory(trimmed)
+    setNewCategory('')
+    setAddingCategory(false)
+  }
 
   function selectPeriod(next: string) {
     setPeriod(next)
@@ -129,6 +188,9 @@ export function MoneyPage() {
     if (existing && !isLedger(existing)) return
     setEntryType(existing?.type ?? 'expense')
     setCategory(existing?.category ?? 'Groceries')
+    if (existing?.category) rememberCategory(existing.category)
+    setAddingCategory(false)
+    setNewCategory('')
     setFormError('')
     setSuccess('')
     setEntryForm(next)
@@ -149,6 +211,7 @@ export function MoneyPage() {
     try {
       if (entryForm && entryForm !== 'new') await api.put(`/api/v1/finance/entries/${entryForm.id}`, payload)
       else await api.post('/api/v1/finance/entries', payload)
+      rememberCategory(payload.category)
       setEntryForm(null)
       setSuccess(entryType === 'income' ? 'Income saved.' : 'Expense saved.')
       await load()
@@ -201,12 +264,17 @@ export function MoneyPage() {
   const remainingNegative = Number(data?.remaining ?? 0) < 0
   const editingEntry = entryForm && entryForm !== 'new' ? entryForm : null
   const editingBill = billForm && billForm !== 'new' ? billForm : null
-  const entries = data?.entries ?? []
+  const focusCategory = linkedCategory.toLowerCase()
+  const entries = (data?.entries ?? []).filter((entry) => !focusCategory || !isLedger(entry) || entry.category.toLowerCase() === focusCategory)
   const entryPages = Math.max(1, Math.ceil(entries.length / ENTRY_PAGE_SIZE))
   const currentEntryPage = Math.min(entryPage, entryPages)
   const pagedEntries = entries.slice((currentEntryPage - 1) * ENTRY_PAGE_SIZE, currentEntryPage * ENTRY_PAGE_SIZE)
   const entryFrom = entries.length ? (currentEntryPage - 1) * ENTRY_PAGE_SIZE + 1 : 0
   const entryTo = Math.min(currentEntryPage * ENTRY_PAGE_SIZE, entries.length)
+  const whatForOptions = useMemo(
+    () => uniqueCategories(CATEGORIES, customCategories, entries.filter(isLedger).map((entry) => entry.category)),
+    [customCategories, entries],
+  )
 
   return <div className="money-page">
     <Heading eyebrow="MONEY" title="Earnings and standing costs" text="Billed totals stay in the top card. Rent, salaries, and extra spend appear as deducted entries when their pay date falls in this period." action={<div className="heading-actions">{mayManage && <button className="button button-primary" type="button" onClick={() => openEntry('new')}><CirclePlus size={16} />Add expense</button>}{mayManage && <button className="button button-secondary" type="button" onClick={() => { setBillForm('new'); setFormError(''); setSuccess('') }}><Banknote size={16} />Fixed bill</button>}</div>} />
@@ -217,6 +285,7 @@ export function MoneyPage() {
       <button className="button button-secondary" type="button" disabled={loading} onClick={() => void load()}><RefreshCw size={15} className={loading ? 'icon-spin' : ''} />{loading ? 'Refreshing…' : 'Refresh'}</button>
     </section>
     <Notice error={error} success={success} />
+    {linkedCategory && <p className="reports-drilldown-note">Showing extra expenses for <strong>{linkedCategory}</strong>. Standing salary and fixed bills stay listed for this period.</p>}
     {loading && !data ? <section className="dashboard-metrics">{['one', 'two', 'three', 'four'].map((key) => <div key={key} className="loading-skeleton metric-skeleton" />)}</section> : data && <>
       <section className="dashboard-metrics">
         <article className="dashboard-metric green"><span><WalletCards size={18} /></span><small>Billed</small><strong>{money(data.billed, currency)}</strong></article>
@@ -236,7 +305,7 @@ export function MoneyPage() {
       </section>
       <section className="data-card money-entries">
         <div className="data-card-heading"><HandCoins size={19} /><h2>Entries</h2><span>{entries.length ? `${entryFrom}–${entryTo} of ${entries.length}` : 0}</span></div>
-        <div className="data-list">{pagedEntries.map((entry) => <div className="data-row money-entry-row" key={String(entry.id)}><div><strong>{entry.category}</strong><small>{payOn(entry.occurred_on)} · {entryKind(entry)}{entry.comment ? ` · ${entry.comment}` : ''}</small></div><b className={entry.type === 'income' ? 'positive' : 'negative'}>{entry.type === 'income' ? '+' : '−'}{money(entry.amount, currency)}</b>{mayManage && isLedger(entry) && <span className="row-actions"><button className="row-action" type="button" title="Edit entry" onClick={() => openEntry(entry)}><Pencil size={18} /></button><button className="row-action danger" type="button" title="Delete entry" onClick={() => setDeleting(entry)}><Trash2 size={18} /></button></span>}</div>)}{!entries.length && <p className="empty-row">No deducted or added entries in this period.</p>}</div>
+        <div className="data-list">{pagedEntries.map((entry) => <div className={`data-row money-entry-row${focusCategory && entry.category.toLowerCase() === focusCategory ? ' is-match' : ''}`} key={String(entry.id)}><div><strong>{entry.category}</strong><small>{payOn(entry.occurred_on)} · {entryKind(entry)}{entry.comment ? ` · ${entry.comment}` : ''}</small></div><b className={entry.type === 'income' ? 'positive' : 'negative'}>{entry.type === 'income' ? '+' : '−'}{money(entry.amount, currency)}</b>{mayManage && isLedger(entry) && <span className="row-actions"><button className="row-action" type="button" title="Edit entry" onClick={() => openEntry(entry)}><Pencil size={18} /></button><button className="row-action danger" type="button" title="Delete entry" onClick={() => setDeleting(entry)}><Trash2 size={18} /></button></span>}</div>)}{!entries.length && <p className="empty-row">No deducted or added entries in this period.</p>}</div>
         {entries.length > ENTRY_PAGE_SIZE && <nav className="money-pager" aria-label="Entries pages">
           <button type="button" className="button button-secondary" disabled={currentEntryPage <= 1} onClick={() => setEntryPage(currentEntryPage - 1)}><ChevronLeft size={16} />Prev</button>
           <span>Page {currentEntryPage} of {entryPages}</span>
@@ -252,8 +321,17 @@ export function MoneyPage() {
         </div>
         <label className="field money-amount-field"><span>Amount</span><input name="amount" type="number" inputMode="decimal" min="0.01" step="0.01" required autoComplete="off" enterKeyHint="next" defaultValue={editingEntry?.amount ?? ''} placeholder="0.00" /></label>
         <div className="field"><span>What for</span>
-          <div className="money-chips">{CATEGORIES.map((item) => <button type="button" key={item} className={category === item ? 'selected' : ''} onClick={() => setCategory(item)}>{item}</button>)}</div>
-          <input name="category" value={category} onChange={(event) => setCategory(event.target.value)} required placeholder="Groceries, construction…" autoComplete="off" />
+          <div className="money-chips" role="group" aria-label="What for">
+            {whatForOptions.map((item) => <button type="button" key={item} className={category.toLowerCase() === item.toLowerCase() ? 'selected' : ''} onClick={() => setCategory(item)}>{item}</button>)}
+            {addingCategory
+              ? <span className="money-chip-add">
+                  <input value={newCategory} onChange={(event) => setNewCategory(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addCategoryChip() } }} placeholder="New category" maxLength={80} autoComplete="off" autoFocus />
+                  <button type="button" className="button button-primary" disabled={!newCategory.trim()} onClick={addCategoryChip}>Add</button>
+                  <button type="button" className="button button-secondary" onClick={() => { setAddingCategory(false); setNewCategory('') }}>Cancel</button>
+                </span>
+              : <button type="button" className="money-chip-new" onClick={() => setAddingCategory(true)}><Plus size={14} />Add</button>}
+          </div>
+          <input name="category" value={category} onChange={(event) => setCategory(event.target.value)} required placeholder="Or type a category" autoComplete="off" />
         </div>
         <label className="field"><span>Comment</span><textarea name="comment" rows={2} defaultValue={editingEntry?.comment ?? ''} placeholder="Bought oil, vegetables…" enterKeyHint="done" /></label>
         <label className="field"><span>Date</span><input name="occurred_on" type="date" required defaultValue={editingEntry?.occurred_on ?? today} /></label>
