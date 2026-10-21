@@ -13,10 +13,10 @@ class OrderItem extends Model
     use HasFactory;
 
     protected $fillable = [
-        'order_id', 'product_id', 'kitchen_station_id', 'fulfillment_mode', 'item_name', 'sku', 'unit',
+        'order_id', 'product_id', 'kitchen_station_id', 'fulfillment_mode', 'service_route', 'item_name', 'sku', 'unit',
         'quantity', 'unit_price', 'unit_cost', 'discount_amount', 'tax_rate',
         'tax_amount', 'line_subtotal', 'line_total', 'status', 'kitchen_note',
-        'preparing_at', 'ready_at', 'served_at', 'cancelled_at', 'preparing_by', 'ready_by', 'served_by', 'cancelled_by', 'cancel_reason', 'inventory_deducted',
+        'preparing_at', 'ready_at', 'served_at', 'tracked_done_at', 'cancelled_at', 'preparing_by', 'ready_by', 'served_by', 'cancelled_by', 'cancel_reason', 'inventory_deducted',
     ];
 
     protected function casts(): array
@@ -26,7 +26,7 @@ class OrderItem extends Model
             'unit_cost' => 'decimal:2', 'discount_amount' => 'decimal:2',
             'tax_rate' => 'decimal:4', 'tax_amount' => 'decimal:2',
             'line_subtotal' => 'decimal:2', 'line_total' => 'decimal:2',
-            'preparing_at' => 'datetime', 'ready_at' => 'datetime', 'served_at' => 'datetime',
+            'preparing_at' => 'datetime', 'ready_at' => 'datetime', 'served_at' => 'datetime', 'tracked_done_at' => 'datetime',
             'cancelled_at' => 'datetime', 'inventory_deducted' => 'boolean',
         ];
     }

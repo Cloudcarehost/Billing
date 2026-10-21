@@ -42,6 +42,7 @@ class OutletOrderFlowTest extends TestCase
         $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'direct-bill-order')->postJson("/api/v1/dining-sessions/{$sessionId}/orders", ['items' => [['product_id' => $product->id, 'quantity' => 4]]])
             ->assertCreated()
             ->assertJsonPath('data.orders.0.items.0.fulfillment_mode', 'direct')
+            ->assertJsonPath('data.orders.0.items.0.service_route', 'kitchen')
             ->assertJsonPath('data.orders.0.items.0.status', 'ready')
             ->assertJsonPath('data.orders.0.items.0.kitchen_station_id', null)
             ->assertJsonPath('data.total_amount', '400.00');
@@ -88,7 +89,7 @@ class OutletOrderFlowTest extends TestCase
         ])->assertOk()->assertJsonPath('data.order_flow', 'direct_bill');
 
         $barItems = OrderItem::query()->whereHas('order', fn ($query) => $query->where('dining_session_id', $barSession))->get();
-        $this->assertTrue($barItems->every(fn (OrderItem $item) => $item->fulfillment_mode === 'direct' && $item->status === 'ready' && $item->kitchen_station_id === null));
+        $this->assertTrue($barItems->every(fn (OrderItem $item) => $item->fulfillment_mode === 'direct' && $item->service_route === 'kitchen' && $item->status === 'ready' && $item->kitchen_station_id === null));
         $this->assertSame('3.000', $drinkStock->fresh()->quantity);
         $restaurantItem = OrderItem::query()->whereHas('order', fn ($query) => $query->where('dining_session_id', $restaurantSession))->sole();
         $this->assertSame('kitchen', $restaurantItem->fulfillment_mode);

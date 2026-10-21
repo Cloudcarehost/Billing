@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Enums\FulfillmentMode;
 use App\Events\RestaurantUpdated;
 use App\Models\DiningSession;
 use App\Models\DiningTable;
@@ -100,7 +101,9 @@ class RestaurantRealtime
     {
         $order->loadMissing(['items', 'diningSession.diningTable:id,name,code', 'diningSession.joinedTables:id,name', 'creator:id,name']);
         $session = $order->diningSession;
-        $active = $order->items->where('status', '!=', 'cancelled');
+        $active = $order->items
+            ->where('service_route', FulfillmentMode::Kitchen->value)
+            ->where('status', '!=', 'cancelled');
 
         return [
             'id' => $order->id,

@@ -45,7 +45,7 @@ class DiningBillingService
             if (DiningSession::occupying($table->id, true)) {
                 $this->invalid('table', 'This dining table already has an active session.');
             }
-            $session = DiningSession::query()->create(['hotel_id' => $table->outlet->hotel_id, 'outlet_id' => $table->outlet_id, 'dining_table_id' => $table->id, 'waiter_id' => $data['waiter_id'] ?? $user->id, 'customer_id' => $data['customer_id'] ?? null, 'guest_count' => $data['guest_count'] ?? 1, 'notes' => $data['notes'] ?? null, 'status' => 'occupied']);
+            $session = DiningSession::query()->create(['hotel_id' => $table->outlet->hotel_id, 'outlet_id' => $table->outlet_id, 'dining_table_id' => $table->id, 'waiter_id' => $data['waiter_id'] ?? $user->id, 'customer_id' => $data['customer_id'] ?? null, 'guest_count' => $data['guest_count'] ?? 1, 'notes' => $data['notes'] ?? null, 'status' => 'occupied', 'opened_at' => now()]);
             ReportService::invalidateDashboard($session->hotel_id);
             RestaurantUpdated::dispatch('session_opened', $session->hotel_id, $session->outlet_id, $session->dining_table_id, $session->id, null, null, $session->waiter_id, null, RestaurantRealtime::payload($session->load('diningTable', 'waiter')));
             OpenBillSnapshotService::queue($session->hotel_id);
@@ -171,7 +171,7 @@ class DiningBillingService
             DiningSessionGuard::assertOccupied($session);
             $directBill = $session->outlet?->order_flow === OutletOrderFlow::DirectBill->value;
             $round = ((int) $session->orders()->lockForUpdate()->max('round_number')) + 1;
-            $order = $session->orders()->create(['created_by' => $user->id, 'ticket_number' => "ORD-{$session->id}-{$round}", 'round_number' => $round, 'notes' => $notes]);
+            $order = $session->orders()->create(['created_by' => $user->id, 'ticket_number' => "ORD-{$session->id}-{$round}", 'round_number' => $round, 'sent_at' => now(), 'notes' => $notes]);
             $products = Product::query()->where('hotel_id', $session->hotel_id)->whereIn('id', collect($items)->pluck('product_id'))->where('is_active', true)->get()->keyBy('id');
             foreach ($items as $item) {
                 $product = $products->get($item['product_id']);
@@ -186,6 +186,7 @@ class DiningBillingService
                         'product_id' => $product->id,
                         'kitchen_station_id' => $isDirect ? null : $product->kitchen_station_id,
                         'fulfillment_mode' => $isDirect ? FulfillmentMode::Direct->value : $product->fulfillment_mode,
+                        'service_route' => $product->fulfillment_mode,
                         'item_name' => $product->name,
                         'sku' => $product->sku,
                         'unit' => $product->unit,
@@ -216,7 +217,8 @@ class DiningBillingService
                 'kitchen_items' => $directBill ? [] : $order->items->where('fulfillment_mode', 'kitchen')->map(fn ($item) => RestaurantRealtime::kitchenItem($item))->values()->all(),
             ];
             if ($directBill) {
-                $payload['live_ticket'] = RestaurantRealtime::liveTicket($order);
+                $liveTicket = RestaurantRealtime::liveTicket($order);
+                $payload['live_ticket'] = count($liveTicket['items']) > 0 ? $liveTicket : null;
             }
             RestaurantRealtime::dispatchToMembers('order_sent', $session, $payload, $order->id);
             OpenBillSnapshotService::queue($session->hotel_id);

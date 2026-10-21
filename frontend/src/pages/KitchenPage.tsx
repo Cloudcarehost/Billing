@@ -12,6 +12,7 @@ import { playFloorSound, soundFor, unlockFloorAlert } from '../features/notifica
 import { qtyLabel } from '../lib/billLines'
 
 type KitchenItem = OrderItem & { order?: { id: number; ticket_number: string; round_number: number; sent_at?: string; creator?: { name: string }; dining_session?: { dining_table?: { name: string; code: string } } } }
+type LiveItemDone = { completed_item_id: number; ticket_complete: boolean; queue_ticket?: LiveTicket; done_ticket?: LiveTicket }
 
 function groupKitchenTickets(items: KitchenItem[]) {
   return items.map((item) => [item])
@@ -20,7 +21,7 @@ function groupKitchenTickets(items: KitchenItem[]) {
 function asLiveTicket(value: unknown): LiveTicket | null {
   if (!value || typeof value !== 'object' || !('id' in value)) return null
   const ticket = value as LiveTicket
-  return typeof ticket.id === 'number' ? ticket : null
+  return typeof ticket.id === 'number' && Array.isArray(ticket.items) && ticket.items.length > 0 ? ticket : null
 }
 
 export function KitchenPage() {
@@ -36,6 +37,7 @@ export function KitchenPage() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busyId, setBusyId] = useState<number | null>(null)
+  const [busyLiveItemId, setBusyLiveItemId] = useState<number | null>(null)
   const [cancelTarget, setCancelTarget] = useState<KitchenItem | null>(null)
   const seenTicketIds = useRef<Set<number> | null>(null)
   const clock = useElapsedClock()
@@ -82,7 +84,9 @@ export function KitchenPage() {
         return
       }
       if (event.type === 'order_sent') {
-        const ticket = asLiveTicket(event.data?.live_ticket)
+        const liveTicket = event.data?.live_ticket
+        if (liveTicket === null) return
+        const ticket = asLiveTicket(liveTicket)
         if (!ticket) { void loadLiveBoard(); return }
         setQueue((current) => current.some((entry) => entry.id === ticket.id) ? current : [...current, ticket])
         setNotice('New order on the live board.')
@@ -93,6 +97,14 @@ export function KitchenPage() {
         if (!ticket) { void loadLiveBoard(); return }
         setQueue((current) => current.filter((entry) => entry.id !== ticket.id))
         setDone((current) => [ticket, ...current.filter((entry) => entry.id !== ticket.id)])
+        return
+      }
+      if (event.type === 'live_item_done') {
+        const queueTicket = asLiveTicket(event.data?.queue_ticket)
+        const doneTicket = asLiveTicket(event.data?.done_ticket)
+        if (queueTicket) setQueue((current) => current.map((entry) => entry.id === queueTicket.id ? queueTicket : entry))
+        else if (event.order_id) setQueue((current) => current.filter((entry) => entry.id !== event.order_id))
+        if (doneTicket) setDone((current) => [doneTicket, ...current.filter((entry) => entry.id !== doneTicket.id)])
       }
       return
     }
@@ -123,14 +135,24 @@ export function KitchenPage() {
     setDone((current) => [{ ...ticket, tracked_done_at: new Date().toISOString() }, ...current.filter((entry) => entry.id !== ticket.id)])
     try { unwrap(await api.post<ApiEnvelope<LiveTicket>>(`/api/v1/orders/${ticket.id}/track-done`)); setNotice(`${ticket.table_name} marked done.`) } catch (requestError) { setError(errorMessage(requestError)); await loadLiveBoard() } finally { setBusyId(null) }
   }
+  const markLiveItemDone = async (ticket: LiveTicket, item: LiveTicket['items'][number]) => {
+    setBusyLiveItemId(item.id); setError('')
+    try {
+      const result = unwrap(await api.post<ApiEnvelope<LiveItemDone>>(`/api/v1/order-items/${item.id}/track-done`))
+      if (result.queue_ticket) setQueue((current) => current.map((entry) => entry.id === ticket.id ? result.queue_ticket! : entry))
+      else setQueue((current) => current.filter((entry) => entry.id !== ticket.id))
+      if (result.done_ticket) setDone((current) => [result.done_ticket!, ...current.filter((entry) => entry.id !== ticket.id)])
+      setNotice(`${item.item_name} marked done.`)
+    } catch (requestError) { setError(errorMessage(requestError)); await loadLiveBoard() } finally { setBusyLiveItemId(null) }
+  }
   const columns: Array<{ key: 'pending' | 'preparing' | 'ready'; label: string }> = [{ key: 'pending', label: 'New' }, { key: 'preparing', label: 'Preparing' }, { key: 'ready', label: 'Ready' }]
   const visible = filter === 'all' ? items : items.filter((item) => item.status === filter)
   const board = tab === 'queue' ? queue : done
   return <section className="kitchen-page">
-    <div className="page-heading"><div><p className="eyebrow">KITCHEN DISPLAY SYSTEM</p><h1>{directBill ? 'Live board' : 'Kitchen queue'}</h1><p>{directBill ? 'Track new rounds here. Billing and item status stay unchanged.' : 'Only items routed to this station appear here.'}</p></div><ConnectionState status={status} /></div>
+    <div className="page-heading"><div><p className="eyebrow">KITCHEN DISPLAY SYSTEM</p><h1>{directBill ? 'Live board' : 'Kitchen queue'}</h1><p>{directBill ? 'Only kitchen-preparation items appear here. Billing and item status stay unchanged.' : 'Only items routed to this station appear here.'}</p></div><ConnectionState status={status} /></div>
     {directBill ? <>
       <div className="kitchen-toolbar"><div className="station-tabs"><button type="button" className={tab === 'queue' ? 'selected' : ''} onClick={() => setTab('queue')}>In queue<span>{queue.length}</span></button><button type="button" className={tab === 'done' ? 'selected' : ''} onClick={() => setTab('done')}>Done<span>{done.length}</span></button></div><button type="button" className="icon-refresh" onClick={() => void loadLiveBoard()}><RefreshCw size={16} /></button></div>
-      <div className="live-board">{!board.length ? <div className="empty-state"><h2>{tab === 'queue' ? 'Nothing in queue' : 'Nothing done yet'}</h2><p>{tab === 'queue' ? 'New orders appear at the bottom as soon as they are added to a bill.' : 'Tickets marked done show here for 3 hours, or until the bill is paid.'}</p></div> : board.map((ticket) => <article className={`kitchen-ticket ${tab === 'done' ? 'live-ticket-done' : ''}`} key={ticket.id}><header><div><strong>{ticket.table_name}</strong><small>{ticket.ticket_number}{ticket.creator_name ? ` · ${ticket.creator_name}` : ''} · {ticket.items.length} item{ticket.items.length > 1 ? 's' : ''}</small></div><span className="ticket-age"><Clock3 size={13} />{elapsedHm(ticket.sent_at, clock) ?? '0h 00m'}</span></header><div className="kitchen-ticket-items">{ticket.items.map((item) => <section key={item.id} className="kitchen-ticket-item"><div className="ticket-item"><b>{qtyLabel(Number(item.quantity))} ×</b><strong>{item.item_name}</strong></div></section>)}</div>{tab === 'queue' && <footer className="live-ticket-actions"><button type="button" className="button button-primary" disabled={busyId === ticket.id} onClick={() => void markTrackedDone(ticket)}><Check size={14} />{busyId === ticket.id ? 'Saving…' : 'Done'}</button></footer>}</article>)}</div>
+      <div className="live-board">{!board.length ? <div className="empty-state"><h2>{tab === 'queue' ? 'Nothing in queue' : 'Nothing done yet'}</h2><p>{tab === 'queue' ? 'New kitchen-preparation items appear here as soon as they are added to a bill.' : 'Tickets marked done show here for 3 hours, or until the bill is paid.'}</p></div> : board.map((ticket) => <article className={`kitchen-ticket ${tab === 'done' ? 'live-ticket-done' : ''}`} key={ticket.id}><header><div><strong>{ticket.table_name}</strong><small>{ticket.ticket_number}{ticket.creator_name ? ` · ${ticket.creator_name}` : ''} · {ticket.items.length} item{ticket.items.length > 1 ? 's' : ''}</small></div><span className="ticket-age"><Clock3 size={13} />{elapsedHm(ticket.sent_at, clock) ?? '0h 00m'}</span></header><div className="kitchen-ticket-items">{ticket.items.map((item) => <section key={item.id} className="kitchen-ticket-item"><div className="ticket-item">{tab === 'queue' && <button type="button" className="live-item-done" disabled={busyLiveItemId === item.id || busyId === ticket.id} title={`Mark ${item.item_name} done`} aria-label={`Mark ${item.item_name} done`} onClick={() => void markLiveItemDone(ticket, item)}><Check size={15} /></button>}<b>{qtyLabel(Number(item.quantity))} ×</b><strong>{item.item_name}</strong></div></section>)}</div>{tab === 'queue' && <footer className="live-ticket-actions"><button type="button" className="button button-primary" disabled={busyId === ticket.id || busyLiveItemId !== null} onClick={() => void markTrackedDone(ticket)}><Check size={14} />{busyId === ticket.id ? 'Saving…' : 'Done all'}</button></footer>}</article>)}</div>
     </> : <>
     <div className="kitchen-toolbar"><div className="station-tabs">{stations.map((entry) => <button type="button" key={entry.id} onClick={() => setStationId(entry.id)} className={entry.id === stationId ? 'selected' : ''}>{entry.name}</button>)}</div><div className="status-filters"><button type="button" className={filter === 'all' ? 'selected' : ''} onClick={() => setFilter('all')}>All</button>{columns.map((column) => <button type="button" key={column.key} className={filter === column.key ? 'selected' : ''} onClick={() => setFilter(column.key)}>{column.label}</button>)}<button type="button" className="icon-refresh" onClick={() => void loadQueue()}><RefreshCw size={16} /></button></div></div>
     <div className="kitchen-columns">{columns.map((column) => { const columnItems = visible.filter((item) => item.status === column.key); return <section key={column.key}><h2>{column.label}<span>{columnItems.length}</span></h2><div className="kitchen-tickets">{groupKitchenTickets(columnItems).map((ticketItems) => <KitchenTicket key={`${column.key}-${ticketItems[0].id}`} items={ticketItems} now={clock} busyId={busyId} allowsCancel={(item) => canCancelItem(session, item)} onTransition={transition} onCancel={cancel} />)}</div></section> })}</div>

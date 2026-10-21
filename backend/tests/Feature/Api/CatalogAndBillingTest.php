@@ -3,11 +3,14 @@
 namespace Tests\Feature\Api;
 
 use App\Models\Category;
+use App\Models\DiningSession;
 use App\Models\DiningTable;
 use App\Models\Hotel;
+use App\Models\Order;
 use App\Models\Product;
 use App\Models\TablePublicLink;
 use App\Models\User;
+use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -50,6 +53,49 @@ class CatalogAndBillingTest extends TestCase
         $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/request-bill")->assertOk();
         $invoiceId = $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/invoice")->assertCreated()->json('data.id');
         $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'catalog-payment')->postJson("/api/v1/invoices/{$invoiceId}/payments", ['method' => 'cash', 'amount' => 210])->assertOk()->assertJsonPath('data.payment_status', 'paid');
+    }
+
+    public function test_session_timer_uses_application_time_and_runs_until_full_payment(): void
+    {
+        [$owner, $hotel] = $this->ownerContext();
+        $outlet = $hotel->outlets()->sole();
+        $table = DiningTable::query()->create(['outlet_id' => $outlet->id, 'name' => 'Table timer', 'code' => 'TIMER', 'capacity' => 4]);
+        $product = Product::query()->create(['hotel_id' => $hotel->id, 'name' => 'Tea', 'selling_price' => 100, 'track_inventory' => false]);
+
+        $openedAt = CarbonImmutable::parse('2026-10-21 12:00:00', 'Asia/Kolkata');
+        $this->travelTo($openedAt);
+        $sessionId = $this->actingAs($owner, 'web')->postJson("/api/v1/tables/{$table->id}/sessions")
+            ->assertCreated()
+            ->json('data.id');
+        $this->assertSame($openedAt->timestamp, DiningSession::query()->findOrFail($sessionId)->opened_at->timestamp);
+        $tableStatus = collect($this->actingAs($owner, 'web')->getJson("/api/v1/tables/status?outlet_id={$outlet->id}")->assertOk()->json('data'))->firstWhere('id', $table->id);
+        $this->assertSame($openedAt->timestamp, CarbonImmutable::parse($tableStatus['active_session']['opened_at'])->timestamp);
+
+        $this->travel(7)->minutes();
+        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'timer-order')->postJson("/api/v1/dining-sessions/{$sessionId}/orders", [
+            'items' => [['product_id' => $product->id, 'quantity' => 1]],
+        ])->assertCreated();
+        $this->assertSame(now()->timestamp, Order::query()->where('dining_session_id', $sessionId)->sole()->sent_at->timestamp);
+
+        $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/request-bill")->assertOk();
+        $invoiceId = $this->actingAs($owner, 'web')->postJson("/api/v1/dining-sessions/{$sessionId}/invoice")
+            ->assertCreated()
+            ->json('data.id');
+
+        $this->travel(3)->minutes();
+        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'timer-partial-payment')->postJson("/api/v1/invoices/{$invoiceId}/payments", [
+            'method' => 'cash', 'amount' => 40,
+        ])->assertOk()->assertJsonPath('data.payment_status', 'partial');
+        $this->assertSame('pending_bill', DiningSession::query()->findOrFail($sessionId)->status);
+        $this->assertNull(DiningSession::query()->findOrFail($sessionId)->closed_at);
+
+        $this->travel(2)->minutes();
+        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'timer-final-payment')->postJson("/api/v1/invoices/{$invoiceId}/payments", [
+            'method' => 'cash', 'amount' => 60,
+        ])->assertOk()->assertJsonPath('data.payment_status', 'paid');
+        $closed = DiningSession::query()->findOrFail($sessionId);
+        $this->assertSame('closed', $closed->status);
+        $this->assertSame(now()->timestamp, $closed->closed_at?->timestamp);
     }
 
     public function test_owner_can_update_an_outlet_from_settings(): void

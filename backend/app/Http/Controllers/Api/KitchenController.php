@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\FulfillmentMode;
 use App\Enums\OrderItemStatus;
 use App\Enums\OutletOrderFlow;
 use App\Models\KitchenStation;
@@ -15,6 +16,7 @@ use App\Services\OrderService;
 use App\Support\RestaurantRealtime;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class KitchenController extends ApiController
@@ -103,11 +105,15 @@ class KitchenController extends ApiController
         $cutoff = now()->subHours(3);
         $base = Order::query()
             ->whereHas('diningSession', fn ($query) => $query->where('hotel_id', $hotel->id)->where('outlet_id', $outlet->id)->whereIn('status', ['occupied', 'pending_bill']))
-            ->whereHas('items', fn ($query) => $query->where('status', '!=', 'cancelled'))
-            ->with(['items' => fn ($query) => $query->where('status', '!=', 'cancelled'), 'diningSession.diningTable:id,name,code', 'diningSession.joinedTables:id,name', 'creator:id,name']);
+            ->whereHas('items', fn ($query) => $query->where('service_route', FulfillmentMode::Kitchen->value)->where('status', '!=', 'cancelled'));
 
-        $queue = (clone $base)->whereNull('tracked_done_at')->orderBy('sent_at')->orderBy('id')->limit(100)->get();
-        $done = (clone $base)->whereNotNull('tracked_done_at')->where('tracked_done_at', '>=', $cutoff)->orderByDesc('tracked_done_at')->orderByDesc('id')->limit(100)->get();
+        $queue = (clone $base)->whereNull('tracked_done_at')
+            ->whereHas('items', fn ($query) => $query->where('service_route', FulfillmentMode::Kitchen->value)->where('status', '!=', 'cancelled')->whereNull('tracked_done_at'))
+            ->with(['items' => fn ($query) => $query->where('service_route', FulfillmentMode::Kitchen->value)->where('status', '!=', 'cancelled')->whereNull('tracked_done_at'), 'diningSession.diningTable:id,name,code', 'diningSession.joinedTables:id,name', 'creator:id,name'])
+            ->orderBy('sent_at')->orderBy('id')->limit(100)->get();
+        $done = (clone $base)->whereNotNull('tracked_done_at')->where('tracked_done_at', '>=', $cutoff)
+            ->with(['items' => fn ($query) => $query->where('service_route', FulfillmentMode::Kitchen->value)->where('status', '!=', 'cancelled'), 'diningSession.diningTable:id,name,code', 'diningSession.joinedTables:id,name', 'creator:id,name'])
+            ->orderByDesc('tracked_done_at')->orderByDesc('id')->limit(100)->get();
 
         return $this->success([
             'queue' => $queue->map(fn (Order $order) => RestaurantRealtime::liveTicket($order))->values(),
@@ -126,13 +132,52 @@ class KitchenController extends ApiController
             ->with(['items', 'diningSession.outlet', 'diningSession.diningTable', 'diningSession.joinedTables:id,name', 'creator:id,name'])
             ->findOrFail($order);
         abort_unless($order->diningSession?->outlet?->order_flow === OutletOrderFlow::DirectBill->value, 422, 'Live tracking is only for direct to bill outlets.');
+        abort_unless($order->items->contains(fn (OrderItem $item) => $item->service_route === FulfillmentMode::Kitchen->value && $item->status !== OrderItemStatus::Cancelled->value), 422, 'This order has no kitchen-preparation items to track.');
         if (! $order->tracked_done_at) {
-            $order->update(['tracked_done_at' => now()]);
+            $completedAt = now();
+            $order->items()->where('service_route', FulfillmentMode::Kitchen->value)->where('status', '!=', OrderItemStatus::Cancelled->value)->whereNull('tracked_done_at')->update(['tracked_done_at' => $completedAt]);
+            $order->update(['tracked_done_at' => $completedAt]);
         }
         $ticket = RestaurantRealtime::liveTicket($order->fresh(['items', 'diningSession.diningTable', 'diningSession.joinedTables:id,name', 'creator:id,name']));
         RestaurantRealtime::dispatchToMembers('live_ticket_done', $order->diningSession, ['live_ticket' => $ticket], $order->id);
 
         return $this->success($ticket, 'Ticket marked done.');
+    }
+
+    public function trackItemDone(Request $request, int $item): JsonResponse
+    {
+        $hotel = $request->attributes->get('currentHotel');
+
+        $result = DB::transaction(function () use ($request, $hotel, $item) {
+            $item = OrderItem::query()
+                ->whereHas('order.diningSession', fn ($query) => $query->where('hotel_id', $hotel->id)->whereIn('outlet_id', $request->attributes->get('accessibleOutletIds', []))->whereIn('status', ['occupied', 'pending_bill']))
+                ->with(['order.diningSession.outlet', 'order.diningSession.diningTable', 'order.diningSession.joinedTables:id,name', 'order.creator:id,name'])
+                ->lockForUpdate()->findOrFail($item);
+            abort_unless($item->order?->diningSession?->outlet?->order_flow === OutletOrderFlow::DirectBill->value, 422, 'Live tracking is only for direct to bill outlets.');
+            abort_unless($item->service_route === FulfillmentMode::Kitchen->value && $item->status !== OrderItemStatus::Cancelled->value, 422, 'This item does not require kitchen preparation.');
+
+            $completedAt = now();
+            if (! $item->tracked_done_at) {
+                $item->update(['tracked_done_at' => $completedAt]);
+            }
+            $order = Order::query()->lockForUpdate()->findOrFail($item->order_id);
+            $remaining = $order->items()->where('service_route', FulfillmentMode::Kitchen->value)->where('status', '!=', OrderItemStatus::Cancelled->value)->whereNull('tracked_done_at')->get();
+            $complete = $remaining->isEmpty();
+            if ($complete && ! $order->tracked_done_at) {
+                $order->update(['tracked_done_at' => $completedAt]);
+            }
+            $order->load(['diningSession.diningTable:id,name,code', 'diningSession.joinedTables:id,name', 'creator:id,name']);
+            $order->setRelation('items', $complete
+                ? $order->items()->where('service_route', FulfillmentMode::Kitchen->value)->where('status', '!=', OrderItemStatus::Cancelled->value)->get()
+                : $remaining);
+            $ticket = RestaurantRealtime::liveTicket($order);
+            $payload = ['completed_item_id' => $item->id, 'ticket_complete' => $complete, $complete ? 'done_ticket' : 'queue_ticket' => $ticket];
+            RestaurantRealtime::dispatchToMembers('live_item_done', $item->order->diningSession, $payload, $order->id, $item->id);
+
+            return $payload;
+        });
+
+        return $this->success($result, 'Kitchen item marked done.');
     }
 
     private function item(Request $request, int $id): OrderItem

@@ -1,4 +1,4 @@
-import { CircleDollarSign, History, Plus, ReceiptText, Undo2, X } from 'lucide-react'
+import { CircleDollarSign, History, ListPlus, Plus, ReceiptText, Undo2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { InvoiceReceiptPanel } from '../components/InvoiceReceiptPanel'
@@ -31,6 +31,7 @@ export function BillingPage() {
   const [closeWithoutSaleOpen, setCloseWithoutSaleOpen] = useState(false)
   const [closeWithoutSaleReason, setCloseWithoutSaleReason] = useState('')
   const [excludeTarget, setExcludeTarget] = useState<{ group: BillLineGroup<OrderItem>; quantity: string } | null>(null)
+  const [addTarget, setAddTarget] = useState<{ group: BillLineGroup<OrderItem>; quantity: string } | null>(null)
   const [guest, setGuest] = useState({ customer_name: '', customer_phone: '', customer_email: '', customer_gstin: '' })
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
@@ -170,16 +171,24 @@ export function BillingPage() {
       setNotice(`${qtyLabel(qty)} × ${group.item_name} removed from this bill.`)
     } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) }
   }
-  const addUnit = async (group: BillLineGroup<OrderItem>) => {
+  const addQuantity = async (group: BillLineGroup<OrderItem>, rawQty: string, closeDialog = false) => {
     if (!selectedSession || !group.product_id || busy || !can(session, 'orders.create')) return
+    const qty = value(rawQty)
+    if (!Number.isFinite(qty) || qty <= 0 || qty > 9999) {
+      setError('Enter a quantity greater than 0 and no more than 9999.')
+      return
+    }
+    setError('')
     setBusy(true)
     try {
-      const updated = unwrap(await api.post<ApiEnvelope<DiningSession>>(`/api/v1/dining-sessions/${selectedSession.id}/orders`, { items: [{ product_id: group.product_id, quantity: 1 }] }, { headers: idempotencyHeaders() }))
+      const updated = unwrap(await api.post<ApiEnvelope<DiningSession>>(`/api/v1/dining-sessions/${selectedSession.id}/orders`, { items: [{ product_id: group.product_id, quantity: qty }] }, { headers: idempotencyHeaders() }))
       setSelectedSession(updated)
       await loadTables()
-      setNotice(`Added 1 × ${group.item_name}.`)
+      if (closeDialog) setAddTarget(null)
+      setNotice(`Added ${qtyLabel(qty)} × ${group.item_name}.`)
     } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) }
   }
+  const addUnit = async (group: BillLineGroup<OrderItem>) => addQuantity(group, '1')
   const closeWithoutSale = async () => { if (!selectedSession || busy || closeWithoutSaleReason.trim().length < 3) return; setBusy(true); setError(''); try { await api.post(`/api/v1/dining-sessions/${selectedSession.id}/close-without-sale`, { reason: closeWithoutSaleReason.trim() }); setCloseWithoutSaleOpen(false); setCloseWithoutSaleReason(''); setSelectedSession(null); setInvoice(null); await loadTables(); setNotice('Zero-value session closed without a sale. The reason was added to the audit log.') } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) } }
   const printReceipt = (bill: Invoice, duplicate: boolean, popup?: Window) => {
     if (!session) { popup?.close(); return }
@@ -232,8 +241,9 @@ export function BillingPage() {
       <span>{money(group.unit_price, session?.hotel.currency_code)}</span>
       <strong>{money(group.line_total, session?.hotel.currency_code)}</strong>
       {(canExclude || canAdd) && <span className="bill-line-actions">
-        {canExclude && <button type="button" className="text-danger" title={`Exclude ${group.item_name}`} onClick={() => group.quantity > 1 ? setExcludeTarget({ group, quantity: '1' }) : void cancelLine(group, '1')}><X size={15} /></button>}
-        {canAdd && <button type="button" className="text-add" title={`Add ${group.item_name}`} onClick={() => void addUnit(group)}><Plus size={15} /></button>}
+        {canExclude && <button type="button" className="text-danger" title={`Exclude ${group.item_name}`} aria-label={`Exclude ${group.item_name}`} disabled={busy} onClick={() => group.quantity > 1 ? setExcludeTarget({ group, quantity: '1' }) : void cancelLine(group, '1')}><X size={15} /></button>}
+        {canAdd && <button type="button" className="text-add" title={`Add 1 ${group.item_name}`} aria-label={`Add 1 ${group.item_name}`} disabled={busy} onClick={() => void addUnit(group)}><Plus size={15} /></button>}
+        {canAdd && <button type="button" className="text-add-quantity" title={`Add multiple ${group.item_name}`} aria-label={`Add multiple ${group.item_name}`} disabled={busy} onClick={() => setAddTarget({ group, quantity: '' })}><ListPlus size={16} /></button>}
       </span>}
     </div>
   }
@@ -267,6 +277,7 @@ export function BillingPage() {
       </>}</main></div>
     <Modal open={closeWithoutSaleOpen} title="Close without sale" onClose={() => !busy && setCloseWithoutSaleOpen(false)}><p className="modal-intro">No invoice will be created. The table will become available and this reason will remain in the audit log.</p><label className="field"><span>Required reason</span><textarea rows={4} maxLength={1000} value={closeWithoutSaleReason} onChange={(event) => setCloseWithoutSaleReason(event.target.value)} placeholder="For example: all items cancelled before preparation" /></label><div className="form-action-row"><button type="button" className="button button-secondary" disabled={busy} onClick={() => setCloseWithoutSaleOpen(false)}>Cancel</button><button type="button" className="button button-primary" disabled={busy || closeWithoutSaleReason.trim().length < 3} onClick={() => void closeWithoutSale()}>{busy ? 'Closing…' : 'Close table'}</button></div></Modal>
     <Modal open={Boolean(excludeTarget)} title={`Exclude ${excludeTarget?.group.item_name ?? 'item'}?`} description="Cancelled quantity stays in history. The rest remains on the bill." onClose={() => !busy && setExcludeTarget(null)}>{excludeTarget && <><p className="modal-intro">{qtyLabel(excludeTarget.group.quantity)} on this bill. Choose how many to exclude.</p><label className="field"><span>Quantity to exclude</span><input type="number" min={1} max={excludeTarget.group.quantity} step="1" value={excludeTarget.quantity} onChange={(event) => setExcludeTarget({ ...excludeTarget, quantity: event.target.value })} /></label><div className="form-action-row"><button type="button" className="button button-secondary" disabled={busy} onClick={() => setExcludeTarget(null)}>Cancel</button><button type="button" className="button button-primary" disabled={busy || value(excludeTarget.quantity) < 1 || value(excludeTarget.quantity) > excludeTarget.group.quantity} onClick={() => void cancelLine(excludeTarget.group, excludeTarget.quantity)}>{busy ? 'Saving…' : 'Exclude'}</button></div></>}</Modal>
+    <Modal open={Boolean(addTarget)} title={`Add ${addTarget?.group.item_name ?? 'item'} quantity`} description="Add several of this item to the bill in one action." onClose={() => !busy && setAddTarget(null)}>{addTarget && <><label className="field"><span>Quantity to add</span><input type="number" min="0.001" max="9999" step="any" inputMode="decimal" required value={addTarget.quantity} onChange={(event) => setAddTarget({ ...addTarget, quantity: event.target.value })} placeholder="For example: 6" /></label><div className="form-action-row"><button type="button" className="button button-secondary" disabled={busy} onClick={() => setAddTarget(null)}>Cancel</button><button type="button" className="button button-primary" disabled={busy || !Number.isFinite(value(addTarget.quantity)) || value(addTarget.quantity) <= 0 || value(addTarget.quantity) > 9999} onClick={() => void addQuantity(addTarget.group, addTarget.quantity, true)}>{busy ? 'Adding…' : 'Add quantity'}</button></div></>}</Modal>
     <Toast message={error || notice} tone={error ? 'error' : 'success'} onDismiss={() => { setNotice(''); setError('') }} />
   </section>
 }

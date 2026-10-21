@@ -146,6 +146,7 @@ Route::prefix('v1')->group(function (): void {
         Route::get('kitchen-stations/{station}/queue', [KitchenController::class, 'queue'])->middleware('permission:kitchen.view');
         Route::get('live-board', [KitchenController::class, 'liveBoard'])->middleware('permission:kitchen.view');
         Route::post('orders/{order}/track-done', [KitchenController::class, 'trackDone'])->middleware('permission:kitchen.view');
+        Route::post('order-items/{item}/track-done', [KitchenController::class, 'trackItemDone'])->middleware('permission:kitchen.view');
         Route::post('order-items/{item}/kitchen-status', [KitchenController::class, 'transition'])->middleware('permission:kitchen.update');
         Route::post('order-items/{item}/serve', [KitchenController::class, 'serve'])->middleware('permission:orders.create');
         Route::post('order-items/{item}/cancel', [KitchenController::class, 'cancel'])->middleware('permission:orders.cancel');

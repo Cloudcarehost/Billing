@@ -17,51 +17,76 @@ class LiveBoardTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_direct_bill_order_appears_on_live_board_and_track_done_does_not_change_item_status(): void
+    public function test_direct_bill_live_board_only_tracks_kitchen_route_items_without_changing_item_status(): void
     {
         [$owner, $hotel] = $this->ownerContext();
         $outlet = $hotel->outlets()->sole();
+        $station = KitchenStation::query()->create(['outlet_id' => $outlet->id, 'name' => 'Hot Kitchen', 'code' => 'HOT']);
         $outlet->update(['order_flow' => 'direct_bill']);
-        $product = Product::query()->create(['hotel_id' => $hotel->id, 'fulfillment_mode' => 'direct', 'name' => 'Water Bottle', 'selling_price' => 40, 'track_inventory' => false]);
+        $water = Product::query()->create(['hotel_id' => $hotel->id, 'fulfillment_mode' => 'direct', 'name' => 'Water Bottle', 'selling_price' => 40, 'track_inventory' => false]);
+        $curry = Product::query()->create(['hotel_id' => $hotel->id, 'kitchen_station_id' => $station->id, 'fulfillment_mode' => 'kitchen', 'name' => 'Curry', 'selling_price' => 100, 'track_inventory' => false]);
+        $dal = Product::query()->create(['hotel_id' => $hotel->id, 'kitchen_station_id' => $station->id, 'fulfillment_mode' => 'kitchen', 'name' => 'Dal', 'selling_price' => 80, 'track_inventory' => false]);
         $table = DiningTable::query()->create(['outlet_id' => $outlet->id, 'name' => 'Table 2', 'code' => 'T2', 'capacity' => 4]);
         $sessionId = $this->actingAs($owner, 'web')->postJson("/api/v1/tables/{$table->id}/sessions")->json('data.id');
-        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'live-first')->postJson("/api/v1/dining-sessions/{$sessionId}/orders", ['items' => [['product_id' => $product->id, 'quantity' => 1]]])->assertCreated();
-        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'live-second')->postJson("/api/v1/dining-sessions/{$sessionId}/orders", ['items' => [['product_id' => $product->id, 'quantity' => 2]]])->assertCreated();
+        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'live-mixed')->postJson("/api/v1/dining-sessions/{$sessionId}/orders", ['items' => [
+            ['product_id' => $water->id, 'quantity' => 1],
+            ['product_id' => $curry->id, 'quantity' => 1],
+            ['product_id' => $dal->id, 'quantity' => 1],
+        ]])->assertCreated();
+        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'live-direct-only')->postJson("/api/v1/dining-sessions/{$sessionId}/orders", ['items' => [['product_id' => $water->id, 'quantity' => 2]]])->assertCreated();
+        $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'live-kitchen-only')->postJson("/api/v1/dining-sessions/{$sessionId}/orders", ['items' => [['product_id' => $curry->id, 'quantity' => 2]]])->assertCreated();
+
+        [$mixedOrder, $directOrder, $kitchenOrder] = Order::query()->orderBy('id')->get()->all();
+        $this->assertTrue($mixedOrder->items()->get()->every(fn (OrderItem $item) => $item->fulfillment_mode === 'direct' && $item->status === 'ready'));
+        $this->assertSame('direct', $mixedOrder->items()->where('product_id', $water->id)->sole()->service_route);
+        $this->assertSame('kitchen', $mixedOrder->items()->where('product_id', $curry->id)->sole()->service_route);
 
         $board = $this->actingAs($owner, 'web')->getJson("/api/v1/live-board?outlet_id={$outlet->id}")
             ->assertOk()
             ->assertJsonCount(2, 'data.queue')
             ->assertJsonCount(0, 'data.done');
-        $firstId = $board->json('data.queue.0.id');
-        $secondId = $board->json('data.queue.1.id');
-        $this->assertGreaterThan($firstId, $secondId);
+        $this->assertSame([$mixedOrder->id, $kitchenOrder->id], collect($board->json('data.queue'))->pluck('id')->all());
+        $this->assertSame(['Curry', 'Dal'], collect($board->json('data.queue.0.items'))->pluck('item_name')->all());
+        $this->assertNotContains($directOrder->id, collect($board->json('data.queue'))->pluck('id')->all());
 
-        $item = OrderItem::query()->where('order_id', $firstId)->sole();
-        $status = $item->status;
-        $readyAt = $item->ready_at?->toISOString();
+        $itemsBefore = $mixedOrder->items()->get()->mapWithKeys(fn (OrderItem $item) => [$item->id => [$item->status, $item->ready_at?->toISOString()]]);
         $total = DiningSession::query()->findOrFail($sessionId)->total_amount;
+        $curryItem = $mixedOrder->items()->where('product_id', $curry->id)->sole();
 
-        $this->actingAs($owner, 'web')->postJson("/api/v1/orders/{$firstId}/track-done")
+        $this->actingAs($owner, 'web')->postJson("/api/v1/order-items/{$curryItem->id}/track-done")
             ->assertOk()
-            ->assertJsonPath('data.id', $firstId)
-            ->assertJsonPath('data.tracked_done_at', fn ($value) => filled($value));
+            ->assertJsonPath('data.completed_item_id', $curryItem->id)
+            ->assertJsonPath('data.ticket_complete', false)
+            ->assertJsonCount(1, 'data.queue_ticket.items')
+            ->assertJsonPath('data.queue_ticket.items.0.item_name', 'Dal');
+        $this->assertNotNull($curryItem->fresh()->tracked_done_at);
+        $partial = $this->actingAs($owner, 'web')->getJson("/api/v1/live-board?outlet_id={$outlet->id}")->assertOk();
+        $this->assertSame(['Dal'], collect($partial->json('data.queue.0.items'))->pluck('item_name')->all());
 
-        $item->refresh();
-        $this->assertSame($status, $item->status);
-        $this->assertSame($readyAt, $item->ready_at?->toISOString());
+        $this->actingAs($owner, 'web')->postJson("/api/v1/orders/{$directOrder->id}/track-done")->assertUnprocessable();
+        $dalItem = $mixedOrder->items()->where('product_id', $dal->id)->sole();
+        $this->actingAs($owner, 'web')->postJson("/api/v1/order-items/{$dalItem->id}/track-done")
+            ->assertOk()
+            ->assertJsonPath('data.ticket_complete', true)
+            ->assertJsonCount(2, 'data.done_ticket.items')
+            ->assertJsonPath('data.done_ticket.tracked_done_at', fn ($value) => filled($value));
+
+        $itemsAfter = $mixedOrder->items()->get()->mapWithKeys(fn (OrderItem $item) => [$item->id => [$item->status, $item->ready_at?->toISOString()]]);
+        $this->assertSame($itemsBefore->all(), $itemsAfter->all());
         $this->assertSame($total, DiningSession::query()->findOrFail($sessionId)->fresh()->total_amount);
 
         $after = $this->actingAs($owner, 'web')->getJson("/api/v1/live-board?outlet_id={$outlet->id}")->assertOk();
-        $this->assertSame([$secondId], collect($after->json('data.queue'))->pluck('id')->all());
-        $this->assertSame([$firstId], collect($after->json('data.done'))->pluck('id')->all());
+        $this->assertSame([$kitchenOrder->id], collect($after->json('data.queue'))->pluck('id')->all());
+        $this->assertSame([$mixedOrder->id], collect($after->json('data.done'))->pluck('id')->all());
     }
 
     public function test_paid_session_and_old_done_tickets_leave_the_live_board(): void
     {
         [$owner, $hotel] = $this->ownerContext();
         $outlet = $hotel->outlets()->sole();
+        $station = KitchenStation::query()->create(['outlet_id' => $outlet->id, 'name' => 'Hot Kitchen', 'code' => 'HOT']);
         $outlet->update(['order_flow' => 'direct_bill']);
-        $product = Product::query()->create(['hotel_id' => $hotel->id, 'fulfillment_mode' => 'direct', 'name' => 'Tea', 'selling_price' => 10, 'track_inventory' => false]);
+        $product = Product::query()->create(['hotel_id' => $hotel->id, 'kitchen_station_id' => $station->id, 'fulfillment_mode' => 'kitchen', 'name' => 'Tea', 'selling_price' => 10, 'track_inventory' => false]);
         $table = DiningTable::query()->create(['outlet_id' => $outlet->id, 'name' => 'Table 3', 'code' => 'T3', 'capacity' => 4]);
         $sessionId = $this->actingAs($owner, 'web')->postJson("/api/v1/tables/{$table->id}/sessions")->json('data.id');
         $this->actingAs($owner, 'web')->withHeader('Idempotency-Key', 'live-pay-order')->postJson("/api/v1/dining-sessions/{$sessionId}/orders", ['items' => [['product_id' => $product->id, 'quantity' => 1]]])->assertCreated();
