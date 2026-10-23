@@ -34,6 +34,9 @@ class RestaurantRealtime
             'ready' => $active->where('status', 'ready')->count(),
             'served' => $active->where('status', 'served')->count(),
         ];
+        $kitchenAttentionCount = $active
+            ->filter(fn ($item) => $item->service_route === FulfillmentMode::Kitchen->value && ! $item->tracked_done_at)
+            ->sum(fn ($item) => (float) $item->quantity);
         $closed = $session->status === 'closed';
         $display = ! ($session->diningTable?->is_active ?? true) || $closed
             ? 'available'
@@ -49,6 +52,7 @@ class RestaurantRealtime
             'waiter_id' => $session->waiter_id,
             'waiter_name' => $session->waiter?->name,
             'kitchen_progress' => $progress,
+            'kitchen_attention_count' => $kitchenAttentionCount,
             'waiter_called' => $session->diningTable?->waiter_called_at !== null,
             'invoice_id' => $session->invoice?->id,
             'invoice_number' => $session->invoice?->invoice_number,
@@ -158,5 +162,27 @@ class RestaurantRealtime
         foreach ($ids as $tableId) {
             RestaurantUpdated::dispatch($type, $session->hotel_id, $session->outlet_id, $tableId, $session->id, $orderId, $itemId, $session->waiter_id, $stationId, $payload);
         }
+    }
+
+    public static function dispatchTableShifted(DiningSession $session, int $sourceTableId, int $targetTableId): void
+    {
+        $session->loadMissing('diningTable', 'waiter', 'joinedTables:id,name,code');
+        RestaurantUpdated::dispatch(
+            'table_shifted',
+            $session->hotel_id,
+            $session->outlet_id,
+            $sourceTableId,
+            $session->id,
+            null,
+            null,
+            $session->waiter_id,
+            null,
+            self::payload($session, [
+                'from_table_id' => $sourceTableId,
+                'to_table_id' => $targetTableId,
+                'joined_table_ids' => $session->memberTableIds(),
+                'primary_table_id' => $session->dining_table_id,
+            ]),
+        );
     }
 }

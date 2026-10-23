@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Events\RestaurantUpdated;
+use App\Models\DiningSession;
 use App\Models\DiningTable;
 use App\Models\Outlet;
 use App\Services\DiningBillingService;
@@ -10,9 +11,8 @@ use App\Services\TablePublicLinkService;
 use App\Support\RestaurantRealtime;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
-use App\Models\DiningSession;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class DiningTableController extends ApiController
@@ -43,7 +43,7 @@ class DiningTableController extends ApiController
         $sessionIds = $sessions->pluck('id');
         $progress = DB::table('order_items')->join('orders', 'orders.id', '=', 'order_items.order_id')
             ->whereIn('orders.dining_session_id', $sessionIds)->groupBy('orders.dining_session_id')
-            ->selectRaw("orders.dining_session_id, COUNT(*) active_item_count, SUM(CASE WHEN order_items.status = 'pending' THEN 1 ELSE 0 END) pending_count, SUM(CASE WHEN order_items.status = 'preparing' THEN 1 ELSE 0 END) preparing_count, SUM(CASE WHEN order_items.status = 'ready' THEN 1 ELSE 0 END) ready_count, SUM(CASE WHEN order_items.status = 'served' THEN 1 ELSE 0 END) served_count")
+            ->selectRaw("orders.dining_session_id, COUNT(*) active_item_count, SUM(CASE WHEN order_items.status = 'pending' THEN 1 ELSE 0 END) pending_count, SUM(CASE WHEN order_items.status = 'preparing' THEN 1 ELSE 0 END) preparing_count, SUM(CASE WHEN order_items.status = 'ready' THEN 1 ELSE 0 END) ready_count, SUM(CASE WHEN order_items.status = 'served' THEN 1 ELSE 0 END) served_count, SUM(CASE WHEN order_items.service_route = 'kitchen' AND order_items.status != 'cancelled' AND order_items.tracked_done_at IS NULL THEN order_items.quantity ELSE 0 END) kitchen_attention_count")
             ->get()->keyBy('dining_session_id');
         $previewRows = DB::table('order_items')->join('orders', 'orders.id', '=', 'order_items.order_id')
             ->whereIn('orders.dining_session_id', $sessionIds)->where('order_items.status', '!=', 'cancelled')
@@ -70,6 +70,7 @@ class DiningTableController extends ApiController
                     'tax_amount' => $session->tax_amount, 'total_amount' => $session->total_amount, 'opened_at' => $session->opened_at,
                     'waiter' => $session->waiter, 'invoice' => $session->invoice,
                     'active_item_count' => (int) ($counts?->active_item_count ?? 0),
+                    'kitchen_attention_count' => (float) ($counts?->kitchen_attention_count ?? 0),
                     'kitchen_progress' => ['pending' => (int) ($counts?->pending_count ?? 0), 'preparing' => (int) ($counts?->preparing_count ?? 0), 'ready' => (int) ($counts?->ready_count ?? 0), 'served' => (int) ($counts?->served_count ?? 0)],
                     'preview_items' => ($previews->get($session->id) ?? collect())->map(fn ($item) => ['id' => $item->id, 'item_name' => $item->item_name, 'quantity' => $item->quantity, 'status' => $item->status])->values(),
                     'orders' => ($previews->get($session->id) ?? collect())->isEmpty() ? [] : [[

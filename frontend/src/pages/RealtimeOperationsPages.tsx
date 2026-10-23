@@ -1,4 +1,4 @@
-import { Ban, BellRing, Check, ChefHat, Combine, Minus, Package, Pencil, Pin, Plus, ReceiptText, Search, Send, TabletSmartphone, X } from 'lucide-react'
+import { ArrowRightLeft, Ban, BellRing, Check, ChefHat, Combine, Minus, Package, Pencil, Pin, Plus, ReceiptText, Search, Send, TabletSmartphone, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -69,6 +69,13 @@ export function OrdersPage() {
   useEffect(() => { if (!selectedSessionId) return; const task = window.setTimeout(() => { void loadSelectedSession(selectedSessionId) }, 0); return () => window.clearTimeout(task) }, [selectedSessionId, loadSelectedSession])
   const { status } = useRestaurantRealtime({ outletId: activeOutletId ?? outletId, tableId: selectedTableId, onUpdate: (event) => {
     if (event.type === 'connection_restored') { void refreshOperationalState(); return }
+    if (event.type === 'table_shifted' && event.data?.from_table_id === selectedTableId && typeof event.data?.to_table_id === 'number') {
+      const targetId = event.data.to_table_id
+      setSelectedTableId(targetId)
+      const next = new URLSearchParams(params)
+      next.set('table', String(targetId))
+      setParams(next, { replace: true })
+    }
     setTables((current) => {
       const result = applyTableEvent(current, event)
       if (!result.handled) { void refreshOperationalState(); return current }
@@ -157,7 +164,18 @@ export function OrdersPage() {
   const requestBill = async () => {
     if (!active || busy) return
     setBusy(true); setError('')
-    try { const updated = unwrap(await api.post<ApiEnvelope<DiningSession>>(`/api/v1/dining-sessions/${active.id}/request-bill`)); setTables((current) => current.map((entry) => entry.id === table.id ? tableWithSession(entry, updated) : entry)); setNotice('Bill request sent to the counter.') } catch (requestError) { setError(errorMessage(requestError)); await load() } finally { setBusy(false) }
+    try {
+      const updated = unwrap(await api.post<ApiEnvelope<DiningSession>>(`/api/v1/dining-sessions/${active.id}/request-bill`))
+      setTables((current) => current.map((entry) => entry.id === table.id ? tableWithSession(entry, updated) : entry))
+      if (can(session, 'billing.view')) {
+        navigate(`/app/billing?session=${updated.id}`)
+      } else {
+        setNotice('Bill request sent to the counter.')
+      }
+    } catch (requestError) {
+      setError(errorMessage(requestError))
+      await load()
+    } finally { setBusy(false) }
   }
   const cancelParcel = async () => {
     if (!active || busy || !isParcelTable(table)) return
@@ -242,6 +260,9 @@ export function TablesPage() {
   const [mergeIds, setMergeIds] = useState<number[]>([])
   const [mergePrimaryId, setMergePrimaryId] = useState<number | null>(null)
   const [merging, setMerging] = useState(false)
+  const [shiftTable, setShiftTable] = useState<DiningTable | null>(null)
+  const [shiftTargetId, setShiftTargetId] = useState('')
+  const [shifting, setShifting] = useState(false)
   const [requestingBillId, setRequestingBillId] = useState<number | null>(null)
   const [search, setSearch] = useState(params.get('q') ?? '')
   const [error, setError] = useState('')
@@ -282,7 +303,7 @@ export function TablesPage() {
     })
     setSelected((current) => {
       if (!current || current.id !== event.table_id) return current
-      if (event.type === 'table_closed') return null
+      if (event.type === 'table_closed' || event.type === 'table_shifted') return null
       const result = applyTableEvent([current], event)
       return result.tables[0] ?? current
     })
@@ -372,6 +393,37 @@ export function TablesPage() {
       setNotice(`${table.name} is available again.`)
     } catch (requestError) { setError(errorMessage(requestError)) }
   }
+  const openShift = (table: DiningTable) => {
+    setShiftTable(table)
+    setShiftTargetId('')
+    setError('')
+  }
+  const closeShift = () => {
+    if (shifting) return
+    setShiftTable(null)
+    setShiftTargetId('')
+  }
+  const availableShiftTables = shiftTable
+    ? tables.filter((entry) => entry.id !== shiftTable.id && entry.outlet_id === shiftTable.outlet_id && entry.is_active && !isParcelTable(entry) && entry.display_status === 'available' && !entry.active_session).sort(compareTables)
+    : []
+  const shiftDestination = availableShiftTables.find((entry) => entry.id === Number(shiftTargetId))
+  const saveShift = async () => {
+    if (!shiftTable?.active_session || !shiftDestination || shifting) return
+    setShifting(true); setError('')
+    try {
+      await api.post(`/api/v1/dining-sessions/${shiftTable.active_session.id}/shift-table`, {
+        source_table_id: shiftTable.id,
+        target_table_id: shiftDestination.id,
+      }, { headers: idempotencyHeaders() })
+      const sourceName = shiftTable.name
+      const destinationName = shiftDestination.name
+      setShiftTable(null)
+      setShiftTargetId('')
+      setSelected((current) => current?.id === shiftTable.id ? null : current)
+      await load()
+      setNotice(`${sourceName} shifted to ${destinationName}.`)
+    } catch (requestError) { setError(errorMessage(requestError)); await load() } finally { setShifting(false) }
+  }
   const openTableForm = (table?: DiningTable) => { setEditingTable(table ?? null); setTableFormOpen(true) }
   const closeTableForm = () => { if (savingTable) return; setTableFormOpen(false); setEditingTable(null) }
   const startParcel = async () => {
@@ -393,7 +445,7 @@ export function TablesPage() {
     const openFor = elapsedHm(table.active_session?.opened_at, clock)
     return <article key={table.id} className={`floor-card ${table.display_status} ${table.display_status === 'pending_bill' ? 'bill-highlight' : ''}${ready ? ' needs-serve' : ''}${called ? ' needs-waiter' : ''}`}>
       <div className="floor-card-heading"><div><span className={`table-state ${table.display_status}`}>{parcel ? 'Parcel' : readable(table.display_status)}</span>{table.primary_table && table.primary_table.id !== table.id ? <span className="joined-table-badge">{mergeLabel.detail}</span> : null}<h2>{table.name}<TableAlertMarks ready={ready} waiterCalled={called} /></h2><p>{table.active_session ? `${parcel ? 'Takeaway' : `${table.active_session.guest_count} guests`} · ${table.active_session.waiter?.name ?? 'No waiter'}${openFor ? ` · ${openFor}` : ''}${table.primary_table && table.primary_table.id === table.id && mergeLabel.detail ? ` · ${mergeLabel.detail}` : ''}${called ? ' · guest called waiter' : ''}${ready ? ' · food ready to serve' : ''}` : table.is_active ? `${table.capacity} seats` : 'Unavailable'}</p></div>{parcel ? <Package size={27} /> : <ChefHat size={27} />}</div>
-      {table.active_session ? <><div className="table-order-preview">{table.active_session.orders.flatMap((order) => order.items).filter((item) => item.status !== 'cancelled').slice(0, 4).map((item) => <span key={item.id}>{item.item_name}<b>{item.quantity}{hideKitchenStatus ? '' : ` · ${readable(item.status)}`}</b></span>)}</div><div className="table-total"><span>Current bill</span><strong>{money(table.current_total, session?.hotel.currency_code)}</strong></div><div className="card-actions table-card-actions"><button type="button" className="button button-secondary" onClick={() => { clearCall(); setSelected(table); setAssignWaiterId(table.active_session?.waiter_id ? String(table.active_session.waiter_id) : '') }}>View details</button><button type="button" className="button button-primary" onClick={() => { clearCall(); navigate(`/app/orders?table=${table.id}`) }}>Add order</button>{!parcel && table.active_session.status === 'occupied' && can(session, 'sessions.open') && <button type="button" className="button button-secondary" onClick={() => openMerge(table)}><Combine size={14} />Merge tables</button>}{!parcel && table.primary_table && table.primary_table.id !== table.id && can(session, 'sessions.open') && <button type="button" className="button button-secondary" onClick={() => void unmergeTable(table)}>Remove from merge</button>}{table.active_session.status === 'occupied' && can(session, 'billing.request') && <button type="button" className="button button-bill-request" disabled={requestingBillId === table.active_session.id} onClick={() => setBillRequestTable(table)}><ReceiptText size={14} />{requestingBillId === table.active_session.id ? 'Requesting…' : 'Request bill'}</button>}{parcel && can(session, 'sessions.open') && <button type="button" className="button button-danger-soft cancel-parcel-button" onClick={() => setCancelParcelTable(table)}><Ban size={14} />Cancel parcel</button>}</div></> : <div className="empty-table">No active order{table.is_active && <button type="button" className="text-action" onClick={() => { clearCall(); navigate(`/app/orders?table=${table.id}`) }}>Open order</button>}</div>}
+      {table.active_session ? <><div className="table-order-preview">{table.active_session.orders.flatMap((order) => order.items).filter((item) => item.status !== 'cancelled').slice(0, 4).map((item) => <span key={item.id}>{item.item_name}<b>{item.quantity}{hideKitchenStatus ? '' : ` · ${readable(item.status)}`}</b></span>)}</div><div className="table-total"><span>Current bill</span><strong>{money(table.current_total, session?.hotel.currency_code)}</strong></div><div className="card-actions table-card-actions"><button type="button" className="button button-secondary" onClick={() => { clearCall(); setSelected(table); setAssignWaiterId(table.active_session?.waiter_id ? String(table.active_session.waiter_id) : '') }}>View details</button><button type="button" className="button button-primary" onClick={() => { clearCall(); navigate(`/app/orders?table=${table.id}`) }}>Add order</button>{!parcel && !table.active_session.invoice && can(session, 'sessions.open') && <button type="button" className="button button-secondary" onClick={() => openShift(table)}><ArrowRightLeft size={14} />Shift table</button>}{!parcel && table.active_session.status === 'occupied' && can(session, 'sessions.open') && <button type="button" className="button button-secondary" onClick={() => openMerge(table)}><Combine size={14} />Merge tables</button>}{!parcel && table.primary_table && table.primary_table.id !== table.id && can(session, 'sessions.open') && <button type="button" className="button button-secondary" onClick={() => void unmergeTable(table)}>Remove from merge</button>}{table.active_session.status === 'occupied' && can(session, 'billing.request') && <button type="button" className="button button-bill-request" disabled={requestingBillId === table.active_session.id} onClick={() => setBillRequestTable(table)}><ReceiptText size={14} />{requestingBillId === table.active_session.id ? 'Requesting…' : 'Request bill'}</button>}{parcel && can(session, 'sessions.open') && <button type="button" className="button button-danger-soft cancel-parcel-button" onClick={() => setCancelParcelTable(table)}><Ban size={14} />Cancel parcel</button>}</div></> : <div className="empty-table">No active order{table.is_active && <button type="button" className="text-action" onClick={() => { clearCall(); navigate(`/app/orders?table=${table.id}`) }}>Open order</button>}</div>}
       {manageTables && !parcel && <button type="button" className="text-action" onClick={() => openTableForm(table)}><Pencil size={14} />Edit table</button>}
     </article>
   }
@@ -428,6 +480,16 @@ export function TablesPage() {
         <div className="outlet-assignment">{tables.filter((entry) => !isParcelTable(entry) && entry.outlet_id === mergeTable.outlet_id && entry.id !== mergeTable.id).map((entry) => <label key={entry.id}><input type="checkbox" checked={mergeIds.includes(entry.id)} onChange={() => setMergeIds((current) => current.includes(entry.id) ? current.filter((id) => id !== entry.id) : [...current, entry.id])} /><span>{entry.name}{entry.active_session && entry.active_session.id !== mergeTable.active_session?.id ? ' · has an open bill (will combine)' : ''}</span></label>)}</div>
         <label className="field"><span>Main table name on the bill</span><select value={mergePrimaryId ?? mergeTable.id} onChange={(event) => setMergePrimaryId(Number(event.target.value))}><option value={mergeTable.id}>{mergeTable.name}</option>{tables.filter((entry) => mergeIds.includes(entry.id)).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
         <div className="form-action-row"><button type="button" className="button button-secondary" onClick={() => setMergeTable(null)}>Cancel</button><button type="button" className="button button-primary" disabled={merging || !mergeIds.length} onClick={() => void saveMerge()}>{merging ? 'Merging…' : 'Merge tables'}</button></div>
+      </div>}
+    </Modal>
+    <Modal open={Boolean(shiftTable)} title={shiftTable ? `Shift ${shiftTable.name}` : 'Shift table'} onClose={closeShift}>
+      {shiftTable && <div className="compact-form shift-table-dialog">
+        <p>Select an available table in the same outlet. The current bill, orders, guests, waiter and timer will move together.</p>
+        {availableShiftTables.length ? <div className="shift-table-options" role="radiogroup" aria-label="Available destination tables">
+          {availableShiftTables.map((entry) => <label key={entry.id} className={shiftTargetId === String(entry.id) ? 'selected' : ''}><input type="radio" name="shift_target" value={entry.id} checked={shiftTargetId === String(entry.id)} disabled={shifting} onChange={(event) => setShiftTargetId(event.target.value)} /><span><strong>{entry.name}</strong><small>{entry.capacity} seats</small></span></label>)}
+        </div> : <div className="empty-state shift-table-empty"><h2>No available tables</h2><p>Free or activate another dine-in table before shifting this session.</p></div>}
+        {shiftDestination && <p className="shift-table-confirmation">Shift <strong>{shiftTable.name}</strong> to <strong>{shiftDestination.name}</strong>?</p>}
+        <div className="form-action-row"><button type="button" className="button button-secondary" disabled={shifting} onClick={closeShift}>Cancel</button><button type="button" className="button button-primary" disabled={shifting || !shiftDestination} onClick={() => void saveShift()}><ArrowRightLeft size={15} />{shifting ? 'Shifting…' : 'Shift table'}</button></div>
       </div>}
     </Modal>
     <ConfirmDialog open={Boolean(billRequestTable)} title="Request final bill?" text={`Send ${billRequestTable?.name ?? 'this table'} to the counter for billing? Extra items can still be added until the final bill is created.`} confirmLabel="Request bill" onClose={() => setBillRequestTable(null)} onConfirm={() => void requestBill()} />

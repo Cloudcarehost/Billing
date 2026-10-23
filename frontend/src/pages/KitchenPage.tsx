@@ -77,7 +77,7 @@ export function KitchenPage() {
       void loadStations(); void loadQueue(); void loadLiveBoard(); return
     }
     if (directBill) {
-      if (event.type === 'connection_restored' || event.type === 'item_cancelled') { void loadLiveBoard(); return }
+      if (event.type === 'connection_restored' || event.type === 'item_cancelled' || event.type === 'table_shifted') { void loadLiveBoard(); return }
       if (event.type === 'table_closed' && event.session_id) {
         setQueue((current) => current.filter((ticket) => ticket.session_id !== event.session_id))
         setDone((current) => current.filter((ticket) => ticket.session_id !== event.session_id))
@@ -108,6 +108,7 @@ export function KitchenPage() {
       }
       return
     }
+    if (event.type === 'table_shifted') { void loadQueue(); return }
     if (event.type === 'order_sent') setNotice('New kitchen ticket received.')
     if (event.type === 'connection_restored') { void loadQueue(); return }
     setItems((current) => {

@@ -8,8 +8,10 @@ use App\Models\DiningTable;
 use App\Models\User;
 use App\Services\AuditService;
 use App\Services\DiningBillingService;
+use App\Services\KitchenService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class DiningSessionController extends ApiController
 {
@@ -109,6 +111,40 @@ class DiningSessionController extends ApiController
         return $this->success($this->session($service->unmergeTable($session, (int) $data['table_id'])), 'Table removed from the group.');
     }
 
+    public function shiftTable(Request $request, int $session, DiningBillingService $service, AuditService $audit): JsonResponse
+    {
+        $session = $this->sessions($request)->findOrFail($session);
+        $data = $request->validate([
+            'source_table_id' => ['required', 'integer'],
+            'target_table_id' => ['required', 'integer', 'different:source_table_id'],
+        ]);
+
+        $shifted = $service->shiftTable(
+            $session,
+            (int) $data['source_table_id'],
+            (int) $data['target_table_id'],
+            $request->user(),
+            $audit,
+        );
+
+        return $this->success($this->session($shifted), 'Table shifted.');
+    }
+
+    public function trackItemsDone(Request $request, int $session, KitchenService $kitchen): JsonResponse
+    {
+        $session = $this->sessions($request)->findOrFail($session);
+        $data = $request->validate([
+            'item_ids' => ['required', 'array', 'min:1', 'max:500'],
+            'item_ids.*' => ['required', 'integer', 'distinct'],
+        ]);
+        $result = $kitchen->trackItemsDone($session, $data['item_ids']);
+
+        return $this->success([
+            'session' => $this->session($result['session']),
+            'tickets' => $result['tickets'],
+        ], 'Kitchen items marked done.');
+    }
+
     public function requestBill(Request $request, int $session, DiningBillingService $service): JsonResponse
     {
         $hotel = $request->attributes->get('currentHotel');
@@ -142,7 +178,7 @@ class DiningSessionController extends ApiController
             'discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
         ]);
         if (! array_key_exists('discount_amount', $data) && ! array_key_exists('discount_percent', $data)) {
-            throw \Illuminate\Validation\ValidationException::withMessages(['discount_amount' => ['Enter a discount amount or percent.']]);
+            throw ValidationException::withMessages(['discount_amount' => ['Enter a discount amount or percent.']]);
         }
         $percent = array_key_exists('discount_percent', $data) && $data['discount_percent'] !== null
             ? (float) $data['discount_percent']
@@ -165,6 +201,7 @@ class DiningSessionController extends ApiController
         $history = collect([['status' => 'session_opened', 'occurred_at' => $session->opened_at?->toISOString()]])
             ->merge($session->orders->flatMap(function ($order) {
                 $entries = collect([['status' => 'order_sent', 'order_id' => $order->id, 'occurred_at' => $order->sent_at?->toISOString()]]);
+
                 return $entries->merge($order->items->flatMap(fn ($item) => collect([
                     $item->preparing_at ? ['status' => 'item_preparing', 'order_id' => $order->id, 'item_id' => $item->id, 'occurred_at' => $item->preparing_at->toISOString()] : null,
                     $item->ready_at ? ['status' => 'item_ready', 'order_id' => $order->id, 'item_id' => $item->id, 'occurred_at' => $item->ready_at->toISOString()] : null,

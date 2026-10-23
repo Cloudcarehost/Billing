@@ -16,7 +16,6 @@ use App\Services\OrderService;
 use App\Support\RestaurantRealtime;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class KitchenController extends ApiController
@@ -144,40 +143,17 @@ class KitchenController extends ApiController
         return $this->success($ticket, 'Ticket marked done.');
     }
 
-    public function trackItemDone(Request $request, int $item): JsonResponse
+    public function trackItemDone(Request $request, int $item, KitchenService $kitchen): JsonResponse
     {
         $hotel = $request->attributes->get('currentHotel');
 
-        $result = DB::transaction(function () use ($request, $hotel, $item) {
-            $item = OrderItem::query()
-                ->whereHas('order.diningSession', fn ($query) => $query->where('hotel_id', $hotel->id)->whereIn('outlet_id', $request->attributes->get('accessibleOutletIds', []))->whereIn('status', ['occupied', 'pending_bill']))
-                ->with(['order.diningSession.outlet', 'order.diningSession.diningTable', 'order.diningSession.joinedTables:id,name', 'order.creator:id,name'])
-                ->lockForUpdate()->findOrFail($item);
-            abort_unless($item->order?->diningSession?->outlet?->order_flow === OutletOrderFlow::DirectBill->value, 422, 'Live tracking is only for direct to bill outlets.');
-            abort_unless($item->service_route === FulfillmentMode::Kitchen->value && $item->status !== OrderItemStatus::Cancelled->value, 422, 'This item does not require kitchen preparation.');
+        $item = OrderItem::query()
+            ->whereHas('order.diningSession', fn ($query) => $query->where('hotel_id', $hotel->id)->whereIn('outlet_id', $request->attributes->get('accessibleOutletIds', []))->whereIn('status', ['occupied', 'pending_bill']))
+            ->with('order.diningSession')
+            ->findOrFail($item);
+        $result = $kitchen->trackItemsDone($item->order->diningSession, [$item->id]);
 
-            $completedAt = now();
-            if (! $item->tracked_done_at) {
-                $item->update(['tracked_done_at' => $completedAt]);
-            }
-            $order = Order::query()->lockForUpdate()->findOrFail($item->order_id);
-            $remaining = $order->items()->where('service_route', FulfillmentMode::Kitchen->value)->where('status', '!=', OrderItemStatus::Cancelled->value)->whereNull('tracked_done_at')->get();
-            $complete = $remaining->isEmpty();
-            if ($complete && ! $order->tracked_done_at) {
-                $order->update(['tracked_done_at' => $completedAt]);
-            }
-            $order->load(['diningSession.diningTable:id,name,code', 'diningSession.joinedTables:id,name', 'creator:id,name']);
-            $order->setRelation('items', $complete
-                ? $order->items()->where('service_route', FulfillmentMode::Kitchen->value)->where('status', '!=', OrderItemStatus::Cancelled->value)->get()
-                : $remaining);
-            $ticket = RestaurantRealtime::liveTicket($order);
-            $payload = ['completed_item_id' => $item->id, 'ticket_complete' => $complete, $complete ? 'done_ticket' : 'queue_ticket' => $ticket];
-            RestaurantRealtime::dispatchToMembers('live_item_done', $item->order->diningSession, $payload, $order->id, $item->id);
-
-            return $payload;
-        });
-
-        return $this->success($result, 'Kitchen item marked done.');
+        return $this->success($result['tickets'][0], 'Kitchen item marked done.');
     }
 
     private function item(Request $request, int $id): OrderItem

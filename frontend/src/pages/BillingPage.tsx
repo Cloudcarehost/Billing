@@ -1,4 +1,4 @@
-import { CircleDollarSign, History, ListPlus, Plus, ReceiptText, Undo2, X } from 'lucide-react'
+import { CircleAlert, CircleDollarSign, History, ListPlus, Plus, ReceiptText, Undo2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { InvoiceReceiptPanel } from '../components/InvoiceReceiptPanel'
@@ -10,8 +10,11 @@ import { api, errorMessage } from '../lib/api'
 import type { ApiEnvelope, DiningSession, DiningTable, Invoice, OrderItem } from '../types/api'
 import { groupBillLines, qtyLabel, statusSummary, takeExcludeUnits, type BillLineGroup } from '../lib/billLines'
 import { openThermalReceiptWindow, printThermalReceipt, printsOnCustomerBill, writeThermalReceipt } from '../lib/thermalReceipt'
-import { ConnectionState, compareTables, elapsedHm, isParcelTable, isPrimaryMergedTable, mergedTableLabel, money, readable, sessionCanTakeOrders, sessionDisplayName, unwrap, useElapsedClock, useOperationalRefresh, value } from './opsShared'
+import { ConnectionState, compareTables, elapsedHm, isDirectBillOutlet, isParcelTable, isPrimaryMergedTable, mergedTableLabel, money, readable, sessionCanTakeOrders, sessionDisplayName, unwrap, useElapsedClock, useOperationalRefresh, value } from './opsShared'
 import { applyTableEvent } from '../features/realtime/applyRestaurantEvent'
+
+const unfinishedKitchenItems = (items: OrderItem[]) => items.filter((item) => item.service_route === 'kitchen' && item.status !== 'cancelled' && !item.tracked_done_at)
+const kitchenAttentionCount = (diningSession?: DiningSession | null) => diningSession?.kitchen_attention_count ?? unfinishedKitchenItems(diningSession?.orders?.flatMap((order) => order.items) ?? []).reduce((sum, item) => sum + Number(item.quantity), 0)
 
 export function BillingPage() {
   const { session, activeOutletId } = useAuth()
@@ -32,6 +35,7 @@ export function BillingPage() {
   const [closeWithoutSaleReason, setCloseWithoutSaleReason] = useState('')
   const [excludeTarget, setExcludeTarget] = useState<{ group: BillLineGroup<OrderItem>; quantity: string } | null>(null)
   const [addTarget, setAddTarget] = useState<{ group: BillLineGroup<OrderItem>; quantity: string } | null>(null)
+  const [attentionGroupKey, setAttentionGroupKey] = useState<string | null>(null)
   const [guest, setGuest] = useState({ customer_name: '', customer_phone: '', customer_email: '', customer_gstin: '' })
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
@@ -79,6 +83,11 @@ export function BillingPage() {
   const outletId = activeOutletId ?? tables[0]?.outlet_id
   const { status } = useRestaurantRealtime({ outletId, onUpdate: (event) => {
     if (event.type === 'connection_restored') { void loadTables(); if (selectedBillingSessionId) void loadSelected(selectedBillingSessionId); return }
+    if (event.type === 'live_item_done' || event.type === 'live_ticket_done') {
+      void loadTables()
+      if (selectedBillingSessionId && event.session_id === selectedBillingSessionId) void loadSelected(selectedBillingSessionId)
+      return
+    }
     setTables((current) => {
       const result = applyTableEvent(current, event)
       if (!result.handled) { void loadTables(); return current }
@@ -89,7 +98,7 @@ export function BillingPage() {
       setInvoice(null)
       return
     }
-    if (selectedBillingSessionId && event.session_id === selectedBillingSessionId && (event.type === 'order_sent' || event.type === 'item_cancelled' || event.type === 'bill_requested')) {
+    if (selectedBillingSessionId && event.session_id === selectedBillingSessionId && (event.type === 'order_sent' || event.type === 'item_cancelled' || event.type === 'bill_requested' || event.type === 'table_shifted')) {
       void loadSelected(selectedBillingSessionId)
     }
     if (event.type === 'invoice_created' && event.session_id === selectedBillingSessionId && typeof event.data?.invoice_id === 'number') {
@@ -100,7 +109,12 @@ export function BillingPage() {
       void loadSelected(selectedBillingSessionId)
     }
   } })
-  useOperationalRefresh(loadTables, status)
+  const refreshBilling = useCallback(async () => {
+    const requests: Array<Promise<void>> = [loadTables()]
+    if (status !== 'live' && selectedBillingSessionId) requests.push(loadSelected(selectedBillingSessionId))
+    await Promise.all(requests)
+  }, [loadSelected, loadTables, selectedBillingSessionId, status])
+  useOperationalRefresh(refreshBilling, status)
   const billed = Boolean(invoice ?? selectedSession?.invoice)
   const billBase = selectedSession ? value(selectedSession.subtotal) + value(selectedSession.tax_amount) + value(selectedSession.service_charge_amount) : 0
   useEffect(() => {
@@ -189,6 +203,26 @@ export function BillingPage() {
     } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) }
   }
   const addUnit = async (group: BillLineGroup<OrderItem>) => addQuantity(group, '1')
+  const completeKitchenItems = async (group: BillLineGroup<OrderItem>) => {
+    if (!selectedSession || busy || !can(session, 'billing.create')) return
+    const items = unfinishedKitchenItems(group.items)
+    if (!items.length) return
+    const count = items.reduce((sum, item) => sum + Number(item.quantity), 0)
+    setError('')
+    setBusy(true)
+    setAttentionGroupKey(group.key)
+    try {
+      const result = unwrap(await api.post<ApiEnvelope<{ session: DiningSession }>>(`/api/v1/dining-sessions/${selectedSession.id}/track-items-done`, { item_ids: items.map((item) => item.id) }, { headers: idempotencyHeaders() }))
+      setSelectedSession(result.session)
+      await loadTables()
+      setNotice(`${qtyLabel(count)} × ${group.item_name} marked done for kitchen.`)
+    } catch (requestError) {
+      setError(errorMessage(requestError))
+    } finally {
+      setAttentionGroupKey(null)
+      setBusy(false)
+    }
+  }
   const closeWithoutSale = async () => { if (!selectedSession || busy || closeWithoutSaleReason.trim().length < 3) return; setBusy(true); setError(''); try { await api.post(`/api/v1/dining-sessions/${selectedSession.id}/close-without-sale`, { reason: closeWithoutSaleReason.trim() }); setCloseWithoutSaleOpen(false); setCloseWithoutSaleReason(''); setSelectedSession(null); setInvoice(null); await loadTables(); setNotice('Zero-value session closed without a sale. The reason was added to the audit log.') } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) } }
   const printReceipt = (bill: Invoice, duplicate: boolean, popup?: Window) => {
     if (!session) { popup?.close(); return }
@@ -232,38 +266,45 @@ export function BillingPage() {
     }
     setDiscountPercent(((amount / billBase) * 100).toFixed(2))
   }
+  const selectedTable = tables.find((table) => table.active_session?.id === selectedSession?.id)
   const renderBillLine = (group: BillLineGroup<OrderItem>) => {
     const canExclude = openForItems && group.items.some((item) => canCancelItem(session, item))
     const canAdd = openForItems && Boolean(group.product_id) && can(session, 'orders.create')
+    const attentionItems = isDirectBillOutlet(session?.outlets, selectedTable?.outlet_id) ? unfinishedKitchenItems(group.items) : []
+    const attentionCount = attentionItems.reduce((sum, item) => sum + Number(item.quantity), 0)
+    const attentionLabel = `${qtyLabel(attentionCount)} ${group.item_name} item${attentionCount === 1 ? '' : 's'} still waiting for kitchen completion`
+    const canComplete = can(session, 'billing.create')
     return <div className="invoice-line bill-qty-line" key={group.key}>
-      <span>{group.item_name}{group.statuses.length ? <small>{statusSummary(group)}</small> : null}</span>
-      <b>{qtyLabel(group.quantity)}</b>
-      <span>{money(group.unit_price, session?.hotel.currency_code)}</span>
-      <strong>{money(group.line_total, session?.hotel.currency_code)}</strong>
-      {(canExclude || canAdd) && <span className="bill-line-actions">
+      <span className="bill-item-name">{group.item_name}{group.statuses.length ? <small>{statusSummary(group)}</small> : null}</span>
+      <span className="bill-attention-cell">
+        {attentionCount > 0 && (canComplete ? <button type="button" className="kitchen-attention-action" title={`${attentionLabel}. Mark done`} aria-label={`${attentionLabel}. Mark done`} disabled={busy} aria-busy={attentionGroupKey === group.key} onClick={() => void completeKitchenItems(group)}><CircleAlert size={18} /></button> : <span className="kitchen-attention-static" title={attentionLabel} aria-label={attentionLabel} role="img"><CircleAlert size={18} /></span>)}
+      </span>
+      <b className="bill-line-quantity">{qtyLabel(group.quantity)}</b>
+      <span className="bill-line-price">{money(group.unit_price, session?.hotel.currency_code)}</span>
+      <strong className="bill-line-amount">{money(group.line_total, session?.hotel.currency_code)}</strong>
+      <span className="bill-line-actions">
         {canExclude && <button type="button" className="text-danger" title={`Exclude ${group.item_name}`} aria-label={`Exclude ${group.item_name}`} disabled={busy} onClick={() => group.quantity > 1 ? setExcludeTarget({ group, quantity: '1' }) : void cancelLine(group, '1')}><X size={15} /></button>}
         {canAdd && <button type="button" className="text-add" title={`Add 1 ${group.item_name}`} aria-label={`Add 1 ${group.item_name}`} disabled={busy} onClick={() => void addUnit(group)}><Plus size={15} /></button>}
         {canAdd && <button type="button" className="text-add-quantity" title={`Add multiple ${group.item_name}`} aria-label={`Add multiple ${group.item_name}`} disabled={busy} onClick={() => setAddTarget({ group, quantity: '' })}><ListPlus size={16} /></button>}
-      </span>}
+      </span>
     </div>
   }
-  const selectedTable = tables.find((table) => table.active_session?.id === selectedSession?.id)
   return <section className="billing-page">
     <div className="page-heading"><div><p className="eyebrow">COUNTER BILLING</p><h1>Settle table bills</h1><p>Create the final bill, take split payments, and retain corrections safely.</p></div><div className="heading-actions"><Link className="button button-secondary" to="/app/billing/history"><History size={15} />Previous bills</Link><ConnectionState status={status} /></div></div>
-    <div className="billing-layout enhanced-billing-layout"><aside className="billing-session-list"><h2>Open tables & parcels</h2>{tables.filter((table) => table.active_session && isPrimaryMergedTable(table)).sort(compareTables).map((table) => { const label = mergedTableLabel(table); const openFor = elapsedHm(table.active_session?.opened_at, clock); return <button type="button" className={`bill-table ${selectedSession?.id === table.active_session?.id ? 'active' : ''} ${table.display_status === 'pending_bill' ? 'needs-bill' : ''}`} key={table.active_session?.id ?? table.id} onClick={() => setSelectedSession(table.active_session ?? null)}><span><strong>{label.title}</strong><small>{isParcelTable(table) ? 'Parcel' : readable(table.display_status)} · {isParcelTable(table) ? 'takeaway' : `${table.active_session?.guest_count} guests`}{openFor ? ` · ${openFor}` : ''}{label.detail ? ` · ${label.detail}` : ''}</small></span><b>{money(table.current_total, session?.hotel.currency_code)}</b></button> })}</aside>
+    <div className="billing-layout enhanced-billing-layout"><aside className="billing-session-list"><h2>Open tables & parcels</h2>{tables.filter((table) => table.active_session && isPrimaryMergedTable(table)).sort(compareTables).map((table) => { const label = mergedTableLabel(table); const openFor = elapsedHm(table.active_session?.opened_at, clock); const attentionCount = isDirectBillOutlet(session?.outlets, table.outlet_id) ? kitchenAttentionCount(table.active_session) : 0; const attentionLabel = `${qtyLabel(attentionCount)} kitchen item${attentionCount === 1 ? '' : 's'} still unfinished`; return <button type="button" className={`bill-table ${selectedSession?.id === table.active_session?.id ? 'active' : ''} ${table.display_status === 'pending_bill' ? 'needs-bill' : ''}`} key={table.active_session?.id ?? table.id} onClick={() => setSelectedSession(table.active_session ?? null)}><span><strong className="bill-table-title">{label.title}{attentionCount > 0 && <span className="bill-table-attention" role="img" aria-label={attentionLabel} title={attentionLabel}><CircleAlert size={16} /></span>}</strong><small>{isParcelTable(table) ? 'Parcel' : readable(table.display_status)} · {isParcelTable(table) ? 'takeaway' : `${table.active_session?.guest_count} guests`}{openFor ? ` · ${openFor}` : ''}{label.detail ? ` · ${label.detail}` : ''}</small></span><b>{money(table.current_total, session?.hotel.currency_code)}</b></button> })}</aside>
       <main className="invoice-panel receipt-panel">{!selectedSession ? <div className="invoice-empty"><CircleDollarSign size={38} /><h2>Select a table</h2><p>Pending-bill tables are highlighted so the counter can settle them quickly.</p></div> : invoice ? <InvoiceReceiptPanel invoice={invoice} busy={busy} tableName={sessionDisplayName(selectedSession, selectedTable && isPrimaryMergedTable(selectedTable) ? selectedTable.name : selectedSession.dining_table?.name)} serviceLabel={isParcelTable(selectedTable ?? (selectedSession.dining_table as DiningTable | undefined)) ? 'Parcel' : 'Dine In'} onBusy={setBusy} onInvoiceChange={(updated) => { setInvoice(updated); if (updated.payment_status === 'paid' && selectedSession) setTables((openTables) => openTables.map((entry) => entry.active_session?.id === selectedSession.id ? { ...entry, display_status: 'available', current_total: '0.00', active_session: null } : entry)) }} onNotice={setNotice} onError={setError} onReopened={(updated) => { setInvoice(null); setSelectedSession(updated); void loadTables() }} onVoided={() => { setInvoice(null); setSelectedSession(null); void loadTables() }} /> : selectedSession.invoice ? <div className="invoice-empty"><h2>Loading bill…</h2></div> : <>
         <div className="invoice-heading"><div><h2>{selectedSession.display_name ?? selectedSession.dining_table?.name ?? 'Current table'}</h2><span>Bill not yet created</span></div></div>
         <div className="invoice-lines">
           <div className="bill-line-section">
             {internalItems.length > 0 && customerItems.length > 0 && <h3>Customer bill</h3>}
-            {customerItems.length > 0 && <div className="bill-qty-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amt</span><span></span></div>}
+            {customerItems.length > 0 && <div className="bill-qty-head"><span>Item</span><span aria-hidden="true"></span><span>Qty</span><span>Price</span><span>Amt</span><span>Actions</span></div>}
             {customerItems.map(renderBillLine)}
             {customerItems.length > 0 && <div className="bill-line-subtotal"><span>Items total</span><strong>{money(sectionTotal(customerItems), session?.hotel.currency_code)}</strong></div>}
             {!customerItems.length && !internalItems.length && <p className="bill-empty-lines">No items on this bill yet.</p>}
           </div>
           {internalItems.length > 0 && <div className="bill-line-section internal-bill-section">
             <h3>Not on customer bill</h3>
-            <div className="bill-qty-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amt</span><span></span></div>
+            <div className="bill-qty-head"><span>Item</span><span aria-hidden="true"></span><span>Qty</span><span>Price</span><span>Amt</span><span>Actions</span></div>
             {internalItems.map(renderBillLine)}
             <div className="bill-line-subtotal"><span>Internal total</span><strong>{money(sectionTotal(internalItems), session?.hotel.currency_code)}</strong></div>
           </div>}

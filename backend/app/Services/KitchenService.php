@@ -2,6 +2,11 @@
 
 namespace App\Services;
 
+use App\Enums\FulfillmentMode;
+use App\Enums\OrderItemStatus;
+use App\Enums\OutletOrderFlow;
+use App\Models\DiningSession;
+use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\User;
 use App\Support\DiningSessionGuard;
@@ -66,5 +71,72 @@ class KitchenService
         }
 
         return $item;
+    }
+
+    /**
+     * @param  list<int>  $itemIds
+     * @return array{session: DiningSession, tickets: list<array<string, mixed>>}
+     */
+    public function trackItemsDone(DiningSession $session, array $itemIds): array
+    {
+        return DB::transaction(function () use ($session, $itemIds) {
+            $session = DiningSession::query()->with('outlet')->lockForUpdate()->findOrFail($session->id);
+            if (! in_array($session->status, ['occupied', 'pending_bill'], true)) {
+                throw ValidationException::withMessages(['session' => ['Kitchen items can only be completed for an open dining session.']]);
+            }
+            if ($session->outlet?->order_flow !== OutletOrderFlow::DirectBill->value) {
+                throw ValidationException::withMessages(['session' => ['Live tracking is only for direct to bill outlets.']]);
+            }
+
+            $ids = collect($itemIds)->map(fn ($id) => (int) $id)->filter()->unique()->sort()->values();
+            $items = OrderItem::query()
+                ->whereIn('id', $ids)
+                ->whereHas('order', fn ($query) => $query->where('dining_session_id', $session->id))
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+            if ($ids->isEmpty() || $items->count() !== $ids->count()) {
+                throw ValidationException::withMessages(['item_ids' => ['Every item must belong to this dining session.']]);
+            }
+            if ($items->contains(fn (OrderItem $item) => $item->service_route !== FulfillmentMode::Kitchen->value || $item->status === OrderItemStatus::Cancelled->value)) {
+                throw ValidationException::withMessages(['item_ids' => ['Only non-cancelled kitchen-preparation items can be completed.']]);
+            }
+
+            $orders = Order::query()->whereIn('id', $items->pluck('order_id')->unique())->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+            $completedAt = now();
+            OrderItem::query()->whereIn('id', $ids)->whereNull('tracked_done_at')->update(['tracked_done_at' => $completedAt]);
+            $tickets = [];
+
+            foreach ($items->groupBy('order_id') as $orderId => $orderItems) {
+                $order = $orders->get((int) $orderId);
+                if (! $order) {
+                    continue;
+                }
+                $remaining = $order->items()->where('service_route', FulfillmentMode::Kitchen->value)->where('status', '!=', OrderItemStatus::Cancelled->value)->whereNull('tracked_done_at')->get();
+                $complete = $remaining->isEmpty();
+                if ($complete && ! $order->tracked_done_at) {
+                    $order->update(['tracked_done_at' => $completedAt]);
+                }
+                $order->load(['diningSession.diningTable:id,name,code', 'diningSession.joinedTables:id,name', 'creator:id,name']);
+                $order->setRelation('items', $complete
+                    ? $order->items()->where('service_route', FulfillmentMode::Kitchen->value)->where('status', '!=', OrderItemStatus::Cancelled->value)->get()
+                    : $remaining);
+                $ticket = RestaurantRealtime::liveTicket($order);
+                $completedIds = $orderItems->pluck('id')->map(fn ($id) => (int) $id)->values()->all();
+                $payload = [
+                    'completed_item_id' => count($completedIds) === 1 ? $completedIds[0] : null,
+                    'completed_item_ids' => $completedIds,
+                    'ticket_complete' => $complete,
+                    $complete ? 'done_ticket' : 'queue_ticket' => $ticket,
+                ];
+                RestaurantRealtime::dispatchToMembers('live_item_done', $order->diningSession, $payload, $order->id, count($completedIds) === 1 ? $completedIds[0] : null);
+                $tickets[] = $payload;
+            }
+
+            return [
+                'session' => $session->fresh()->load('diningTable', 'waiter', 'joinedTables:id,name,code', 'orders.items.product.category:id,name,print_on_bill', 'invoice'),
+                'tickets' => $tickets,
+            ];
+        });
     }
 }

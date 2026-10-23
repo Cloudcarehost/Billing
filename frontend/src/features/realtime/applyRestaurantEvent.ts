@@ -81,6 +81,7 @@ function patchSession(session: DiningSession, event: RestaurantEvent): DiningSes
     waiter_id: waiterId,
     waiter: waiterName ? { id: waiterId ?? session.waiter?.id ?? 0, name: waiterName } : session.waiter,
     kitchen_progress: progressFrom(event, session.kitchen_progress),
+    kitchen_attention_count: typeof data.kitchen_attention_count === 'number' ? data.kitchen_attention_count : session.kitchen_attention_count,
     invoice: event.type === 'invoice_reopened' ? null : typeof data.invoice_id === 'number' ? { ...(session.invoice ?? { id: data.invoice_id, invoice_number: String(data.invoice_number ?? ''), status: 'issued', payment_status: 'unpaid', total_amount: String(data.current_total ?? session.total_amount), paid_amount: '0.00', balance_amount: String(data.current_total ?? session.total_amount) }), id: data.invoice_id, invoice_number: String(data.invoice_number ?? session.invoice?.invoice_number ?? '') } : session.invoice,
     orders,
     display_name: typeof data.table_name === 'string' ? data.table_name : session.display_name,
@@ -111,6 +112,28 @@ export function applyTableEvent(tables: DiningTable[], event: RestaurantEvent): 
   if (event.type === 'table_closed') {
     const next = tables.map((entry) => ids.includes(entry.id) ? { ...entry, display_status: 'available' as const, current_total: '0.00', waiter_called: false, active_session: null, primary_table: null, joined_tables: [] } : entry)
     return { tables: next, handled: true, needsSession: null }
+  }
+
+  if (event.type === 'table_shifted' && event.session_id) {
+    const memberIds = Array.isArray(data.joined_table_ids) ? data.joined_table_ids.filter((id): id is number => typeof id === 'number') : []
+    const fromTableId = typeof data.from_table_id === 'number' ? data.from_table_id : tableId
+    const primaryTableId = typeof data.primary_table_id === 'number' ? data.primary_table_id : null
+    const source = tables.find((entry) => entry.active_session?.id === event.session_id)?.active_session
+    if (!source || !memberIds.length) return { tables, handled: false, needsSession: event.session_id }
+    const primary = tables.find((entry) => entry.id === primaryTableId)
+    const shifted = patchSession({
+      ...source,
+      dining_table_id: primaryTableId ?? source.dining_table_id,
+      dining_table: primary ? { id: primary.id, name: primary.name, code: primary.code, capacity: primary.capacity, service_type: primary.service_type } : source.dining_table,
+    }, event)
+    const next = tables.map((entry) => {
+      if (memberIds.includes(entry.id)) return tableWithSession(entry, shifted)
+      if (entry.id === fromTableId || entry.active_session?.id === event.session_id) {
+        return { ...entry, display_status: 'available' as const, current_total: '0.00', waiter_called: false, active_session: null, primary_table: null, joined_tables: [] }
+      }
+      return entry
+    })
+    return { tables: next, handled: true, needsSession: event.session_id }
   }
 
   const attachSession = event.type === 'session_opened' || event.type === 'tables_merged'

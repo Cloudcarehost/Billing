@@ -164,6 +164,74 @@ class DiningBillingService
         });
     }
 
+    public function shiftTable(DiningSession $session, int $sourceTableId, int $targetTableId, User $user, AuditService $audit): DiningSession
+    {
+        return DB::transaction(function () use ($session, $sourceTableId, $targetTableId, $user, $audit) {
+            $session = DiningSession::query()->with('joinedTables:id,name,code', 'diningTable')->lockForUpdate()->findOrFail($session->id);
+            if (! in_array($session->status, ['occupied', 'pending_bill'], true)) {
+                $this->invalid('session', 'Only an open dining session can be shifted.');
+            }
+            if ($session->invoices()->exists()) {
+                $this->invalid('session', 'A table cannot be shifted after a final invoice has been created.');
+            }
+
+            $memberIds = collect($session->memberTableIds())->map(fn ($id) => (int) $id);
+            if (! $memberIds->contains($sourceTableId)) {
+                $this->invalid('source_table_id', 'The source table is not part of this dining session.');
+            }
+            if ($memberIds->contains($targetTableId)) {
+                $this->invalid('target_table_id', 'Choose an available table outside the current group.');
+            }
+
+            $tables = DiningTable::query()->whereIn('id', [$sourceTableId, $targetTableId])->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+            $source = $tables->get($sourceTableId);
+            $target = $tables->get($targetTableId);
+            if (! $source) {
+                $this->invalid('source_table_id', 'The source table was not found.');
+            }
+            if (! $target) {
+                $this->invalid('target_table_id', 'The destination table was not found.');
+            }
+            if ($source->outlet_id !== $session->outlet_id || $target->outlet_id !== $session->outlet_id) {
+                $this->invalid('target_table_id', 'Tables can only be shifted within the same outlet.');
+            }
+            if ($source->isParcel() || $target->isParcel()) {
+                $this->invalid('target_table_id', 'Parcel tables cannot be used for a table shift.');
+            }
+            if (! $target->is_active) {
+                $this->invalid('target_table_id', 'The destination table is inactive.');
+            }
+            if (DiningSession::occupying($targetTableId, true)) {
+                $this->invalid('target_table_id', 'The destination table is no longer available.');
+            }
+
+            if ($sourceTableId === (int) $session->dining_table_id) {
+                $session->update(['dining_table_id' => $targetTableId]);
+            } else {
+                $session->joinedTables()->detach($sourceTableId);
+                $session->joinedTables()->attach($targetTableId);
+            }
+            if ($source->waiter_called_at !== null) {
+                $source->update(['waiter_called_at' => null]);
+            }
+            if ($target->waiter_called_at !== null) {
+                $target->update(['waiter_called_at' => null]);
+            }
+
+            $session = $session->fresh()->load('diningTable', 'waiter', 'joinedTables:id,name,code', 'orders.items', 'invoice');
+            $audit->record($session, 'dining_session.table_shifted', $user, $session->hotel_id, $session->outlet_id, [
+                'source_table_id' => $sourceTableId,
+                'source_table_name' => $source->name,
+                'target_table_id' => $targetTableId,
+                'target_table_name' => $target->name,
+            ]);
+            RestaurantRealtime::dispatchTableShifted($session, $sourceTableId, $targetTableId);
+            OpenBillSnapshotService::queue($session->hotel_id);
+
+            return $session;
+        });
+    }
+
     public function addOrder(DiningSession $session, User $user, array $items, ?string $notes = null): DiningSession
     {
         return DB::transaction(function () use ($session, $user, $items, $notes) {
