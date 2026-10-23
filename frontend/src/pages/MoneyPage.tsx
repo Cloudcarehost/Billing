@@ -1,5 +1,5 @@
-import { Banknote, ChevronLeft, ChevronRight, CirclePlus, HandCoins, Pencil, Plus, RefreshCw, Trash2, Wallet, WalletCards } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Banknote, Check, ChevronLeft, ChevronRight, CirclePlus, HandCoins, Pencil, Plus, RefreshCw, Trash2, Wallet, WalletCards, X } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Modal, ConfirmDialog } from '../components/ui/Feedback'
@@ -58,8 +58,22 @@ const ENTRY_PAGE_SIZE = 5
 function categoryStorageKey(hotelId?: number) {
   return hotelId ? `money-what-for:${hotelId}` : ''
 }
+function hiddenCategoryStorageKey(hotelId?: number) {
+  return hotelId ? `money-what-for-hidden:${hotelId}` : ''
+}
 function readStoredCategories(hotelId?: number): string[] {
   const key = categoryStorageKey(hotelId)
+  if (!key) return []
+  try {
+    const raw = window.localStorage.getItem(key)
+    const parsed = raw ? JSON.parse(raw) as unknown : []
+    return Array.isArray(parsed) ? parsed.map((item) => String(item).trim()).filter(Boolean) : []
+  } catch {
+    return []
+  }
+}
+function readHiddenCategories(hotelId?: number): string[] {
+  const key = hiddenCategoryStorageKey(hotelId)
   if (!key) return []
   try {
     const raw = window.localStorage.getItem(key)
@@ -119,8 +133,12 @@ export function MoneyPage() {
   const [entryType, setEntryType] = useState<'expense' | 'income'>('expense')
   const [category, setCategory] = useState('Groceries')
   const [customCategories, setCustomCategories] = useState<string[]>(() => readStoredCategories(session?.hotel.id))
+  const [hiddenCategories, setHiddenCategories] = useState<string[]>(() => readHiddenCategories(session?.hotel.id))
   const [addingCategory, setAddingCategory] = useState(false)
   const [newCategory, setNewCategory] = useState('')
+  const [managingCategories, setManagingCategories] = useState(false)
+  const [editingCategory, setEditingCategory] = useState<string | null>(null)
+  const [categoryDraft, setCategoryDraft] = useState('')
   const [entryPage, setEntryPage] = useState(1)
   const requestSeq = useRef(0)
   const mayManage = can(session, 'finance.manage')
@@ -152,15 +170,29 @@ export function MoneyPage() {
     }
   }, [query])
   useEffect(() => { const task = window.setTimeout(() => { void load() }, 0); return () => window.clearTimeout(task) }, [load])
-  useEffect(() => { setCustomCategories(readStoredCategories(session?.hotel.id)) }, [session?.hotel.id])
+  useEffect(() => {
+    const task = window.setTimeout(() => {
+      setCustomCategories(readStoredCategories(session?.hotel.id))
+      setHiddenCategories(readHiddenCategories(session?.hotel.id))
+    }, 0)
+    return () => window.clearTimeout(task)
+  }, [session?.hotel.id])
   function persistCategories(next: string[]) {
     setCustomCategories(next)
     const key = categoryStorageKey(session?.hotel.id)
     if (key) window.localStorage.setItem(key, JSON.stringify(next))
   }
+  function persistHiddenCategories(next: string[]) {
+    setHiddenCategories(next)
+    const key = hiddenCategoryStorageKey(session?.hotel.id)
+    if (key) window.localStorage.setItem(key, JSON.stringify(next))
+  }
   function rememberCategory(name: string) {
     const trimmed = name.trim()
     if (!trimmed) return
+    if (hiddenCategories.some((item) => item.toLowerCase() === trimmed.toLowerCase())) {
+      persistHiddenCategories(hiddenCategories.filter((item) => item.toLowerCase() !== trimmed.toLowerCase()))
+    }
     const already = uniqueCategories(CATEGORIES, customCategories).some((item) => item.toLowerCase() === trimmed.toLowerCase())
     if (already) return
     persistCategories(uniqueCategories(customCategories, [trimmed]))
@@ -172,6 +204,34 @@ export function MoneyPage() {
     setCategory(trimmed)
     setNewCategory('')
     setAddingCategory(false)
+  }
+  function removeCategoryChip(name: string) {
+    const key = name.toLowerCase()
+    persistCategories(customCategories.filter((item) => item.toLowerCase() !== key))
+    persistHiddenCategories(uniqueCategories(hiddenCategories, [name]))
+    if (category.toLowerCase() === key) {
+      const next = whatForOptions.find((item) => item.toLowerCase() !== key) ?? ''
+      setCategory(next)
+    }
+    if (editingCategory?.toLowerCase() === key) setEditingCategory(null)
+  }
+  function startCategoryEdit(name: string) {
+    setEditingCategory(name)
+    setCategoryDraft(name)
+  }
+  function saveCategoryEdit() {
+    if (!editingCategory) return
+    const renamed = categoryDraft.trim()
+    if (!renamed) return
+    const oldKey = editingCategory.toLowerCase()
+    const sameName = renamed.toLowerCase() === oldKey
+    if (!sameName) {
+      persistCategories(uniqueCategories(customCategories.filter((item) => item.toLowerCase() !== oldKey), [renamed]))
+      persistHiddenCategories(uniqueCategories(hiddenCategories.filter((item) => item.toLowerCase() !== renamed.toLowerCase()), [editingCategory]))
+      if (category.toLowerCase() === oldKey) setCategory(renamed)
+    }
+    setEditingCategory(null)
+    setCategoryDraft('')
   }
 
   function selectPeriod(next: string) {
@@ -191,6 +251,8 @@ export function MoneyPage() {
     if (existing?.category) rememberCategory(existing.category)
     setAddingCategory(false)
     setNewCategory('')
+    setManagingCategories(false)
+    setEditingCategory(null)
     setFormError('')
     setSuccess('')
     setEntryForm(next)
@@ -271,10 +333,8 @@ export function MoneyPage() {
   const pagedEntries = entries.slice((currentEntryPage - 1) * ENTRY_PAGE_SIZE, currentEntryPage * ENTRY_PAGE_SIZE)
   const entryFrom = entries.length ? (currentEntryPage - 1) * ENTRY_PAGE_SIZE + 1 : 0
   const entryTo = Math.min(currentEntryPage * ENTRY_PAGE_SIZE, entries.length)
-  const whatForOptions = useMemo(
-    () => uniqueCategories(CATEGORIES, customCategories, entries.filter(isLedger).map((entry) => entry.category)),
-    [customCategories, entries],
-  )
+  const hiddenCategoryKeys = new Set(hiddenCategories.map((item) => item.toLowerCase()))
+  const whatForOptions = uniqueCategories(CATEGORIES, customCategories, entries.filter(isLedger).map((entry) => entry.category)).filter((item) => !hiddenCategoryKeys.has(item.toLowerCase()))
 
   return <div className="money-page">
     <Heading eyebrow="MONEY" title="Earnings and standing costs" text="Billed totals stay in the top card. Rent, salaries, and extra spend appear as deducted entries when their pay date falls in this period." action={<div className="heading-actions">{mayManage && <button className="button button-primary" type="button" onClick={() => openEntry('new')}><CirclePlus size={16} />Add expense</button>}{mayManage && <button className="button button-secondary" type="button" onClick={() => { setBillForm('new'); setFormError(''); setSuccess('') }}><Banknote size={16} />Fixed bill</button>}</div>} />
@@ -320,9 +380,21 @@ export function MoneyPage() {
           <button type="button" className={entryType === 'income' ? 'selected' : ''} onClick={() => setEntryType('income')}>Other income</button>
         </div>
         <label className="field money-amount-field"><span>Amount</span><input name="amount" type="number" inputMode="decimal" min="0.01" step="0.01" required autoComplete="off" enterKeyHint="next" defaultValue={editingEntry?.amount ?? ''} placeholder="0.00" /></label>
-        <div className="field"><span>What for</span>
+        <div className="field"><span className="money-category-heading">What for<button type="button" onClick={() => { setManagingCategories((current) => !current); setEditingCategory(null) }}>{managingCategories ? 'Done' : 'Manage'}</button></span>
           <div className="money-chips" role="group" aria-label="What for">
-            {whatForOptions.map((item) => <button type="button" key={item} className={category.toLowerCase() === item.toLowerCase() ? 'selected' : ''} onClick={() => setCategory(item)}>{item}</button>)}
+            {whatForOptions.map((item) => editingCategory?.toLowerCase() === item.toLowerCase()
+              ? <span className="money-chip-edit" key={item}>
+                  <input value={categoryDraft} onChange={(event) => setCategoryDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); saveCategoryEdit() } }} maxLength={80} aria-label={`Rename ${item}`} autoFocus />
+                  <button type="button" className="money-chip-icon save" title="Save category name" aria-label={`Save renamed ${item}`} disabled={!categoryDraft.trim()} onClick={saveCategoryEdit}><Check size={14} /></button>
+                  <button type="button" className="money-chip-icon" title="Cancel editing" aria-label={`Cancel editing ${item}`} onClick={() => setEditingCategory(null)}><X size={14} /></button>
+                </span>
+              : <span className={`money-chip${category.toLowerCase() === item.toLowerCase() ? ' selected' : ''}`} key={item}>
+                  <button type="button" className="money-chip-select" onClick={() => setCategory(item)}>{item}</button>
+                  {managingCategories && <span className="money-chip-controls">
+                    <button type="button" className="money-chip-icon" title={`Rename ${item}`} aria-label={`Rename ${item}`} onClick={() => startCategoryEdit(item)}><Pencil size={13} /></button>
+                    <button type="button" className="money-chip-icon danger" title={`Remove ${item}`} aria-label={`Remove ${item}`} onClick={() => removeCategoryChip(item)}><Trash2 size={13} /></button>
+                  </span>}
+                </span>)}
             {addingCategory
               ? <span className="money-chip-add">
                   <input value={newCategory} onChange={(event) => setNewCategory(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addCategoryChip() } }} placeholder="New category" maxLength={80} autoComplete="off" autoFocus />
