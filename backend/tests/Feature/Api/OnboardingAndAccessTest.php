@@ -29,7 +29,7 @@ class OnboardingAndAccessTest extends TestCase
             ->assertJsonPath('data.hotel.name', 'Lakeview Hotel');
 
         $hotel = Hotel::query()->sole();
-        $this->assertDatabaseCount('permissions', 37);
+        $this->assertDatabaseCount('permissions', 40);
         $this->assertDatabaseCount('roles', 5);
         $this->assertDatabaseHas('hotel_user', [
             'hotel_id' => $hotel->id,
