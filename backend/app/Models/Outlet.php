@@ -56,4 +56,9 @@ class Outlet extends Model
     {
         return $this->hasMany(InvoiceSequence::class);
     }
+
+    public function customerComplaints(): HasMany
+    {
+        return $this->hasMany(CustomerComplaint::class);
+    }
 }

@@ -75,4 +75,9 @@ class Invoice extends Model
     {
         return $this->hasMany(Payment::class);
     }
+
+    public function customerComplaints(): HasMany
+    {
+        return $this->hasMany(CustomerComplaint::class);
+    }
 }

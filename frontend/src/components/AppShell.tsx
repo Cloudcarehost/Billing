@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { Bell, BookOpen, ChefHat, ClipboardList, LayoutDashboard, LogOut, Menu, Moon, Package, QrCode, Search, Settings, Store, Users, UtensilsCrossed, Wallet, Wifi, WifiOff, X } from 'lucide-react'
+import { Bell, BookOpen, ChefHat, ClipboardList, LayoutDashboard, LogOut, Menu, MessageSquareWarning, Moon, Package, QrCode, Search, Settings, Store, Users, UtensilsCrossed, Wallet, Wifi, WifiOff, X } from 'lucide-react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../features/auth/AuthContext'
 import { can, canAny, firstAccessiblePath, isOwner } from '../features/auth/permissions'
@@ -12,7 +12,7 @@ import { unwrap, useOperationalRefresh } from '../pages/opsShared'
 import type { ApiEnvelope, DiningTable } from '../types/api'
 
 const navigation = [
-  ['Dashboard', '/app', LayoutDashboard, 'dashboard.view'], ['Tables', '/app/tables', UtensilsCrossed, 'tables.view'], ['Orders', '/app/orders', ClipboardList, 'orders.create'], ['Kitchen display', '/app/kitchen', ChefHat, 'kitchen.view'], ['Billing', '/app/billing', BookOpen, 'billing.view'], ['Menu', '/app/menu', ChefHat, 'catalog.view'], ['Inventory', '/app/inventory', Package, 'inventory.view'], ['Reports', '/app/reports', LayoutDashboard, 'reports.view'], ['Money', '/app/money', Wallet, 'finance.view'], ['Customers', '/app/customers', Users, 'customers.view'],
+  ['Dashboard', '/app', LayoutDashboard, ['dashboard.view']], ['Tables', '/app/tables', UtensilsCrossed, ['tables.view']], ['Orders', '/app/orders', ClipboardList, ['orders.create']], ['Kitchen display', '/app/kitchen', ChefHat, ['kitchen.view']], ['Billing', '/app/billing', BookOpen, ['billing.view']], ['Menu', '/app/menu', ChefHat, ['catalog.view']], ['Inventory', '/app/inventory', Package, ['inventory.view']], ['Reports', '/app/reports', LayoutDashboard, ['reports.view']], ['Money', '/app/money', Wallet, ['finance.view']], ['Complaints', '/app/complaints', MessageSquareWarning, ['complaints.view', 'complaints.create', 'complaints.manage']], ['Customers', '/app/customers', Users, ['customers.view']],
 ] as const
 
 function LiveClock({ timezone, businessDate }: { timezone: string; businessDate?: string | null }) {
@@ -182,7 +182,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (window.matchMedia('(max-width: 760px)').matches) setMenuOpen(false)
   }
   const links = <>
-    <nav className="main-nav">{navigation.filter(([, , , permission]) => can(session, permission)).map(([label, path, Icon]) => <NavLink key={path} to={path} end={path === '/app'} className="nav-link" onClick={closeDrawerIfMobile}><Icon size={17} />{label}{path === '/app/billing' && pendingBills > 0 ? <b className="nav-count">{pendingBills > 9 ? '9+' : pendingBills}</b> : null}</NavLink>)}</nav>
+    <nav className="main-nav">{navigation.filter(([, , , permissions]) => canAny(session, [...permissions])).map(([label, path, Icon]) => <NavLink key={path} to={path} end={path === '/app'} className="nav-link" onClick={closeDrawerIfMobile}><Icon size={17} />{label}{path === '/app/billing' && pendingBills > 0 ? <b className="nav-count">{pendingBills > 9 ? '9+' : pendingBills}</b> : null}</NavLink>)}</nav>
     <div className="sidebar-bottom">
       {can(session, 'settings.manage') && <NavLink to="/app/settings/hotel" className="nav-link" onClick={closeDrawerIfMobile}><Settings size={17} />Hotel settings</NavLink>}
       {can(session, 'settings.manage') && <NavLink to="/app/settings/outlets" className="nav-link" onClick={closeDrawerIfMobile}><Store size={17} />Outlets</NavLink>}

@@ -89,6 +89,26 @@ class User extends Authenticatable
         return $this->hasMany(Payment::class, 'received_by');
     }
 
+    public function createdComplaints(): HasMany
+    {
+        return $this->hasMany(CustomerComplaint::class, 'created_by');
+    }
+
+    public function complaintAttributions(): HasMany
+    {
+        return $this->hasMany(CustomerComplaintUser::class);
+    }
+
+    public function resolvedComplaints(): HasMany
+    {
+        return $this->hasMany(CustomerComplaint::class, 'resolved_by');
+    }
+
+    public function complaintEvents(): HasMany
+    {
+        return $this->hasMany(CustomerComplaintEvent::class, 'actor_id');
+    }
+
     public function hasPermissionForHotel(string $permission, Hotel $hotel): bool
     {
         $membership = $this->hotels()

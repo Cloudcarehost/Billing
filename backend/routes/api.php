@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CategoryController;
+use App\Http\Controllers\Api\CustomerComplaintController;
 use App\Http\Controllers\Api\DiningSessionController;
 use App\Http\Controllers\Api\DiningTableController;
 use App\Http\Controllers\Api\FinanceController;
@@ -106,6 +107,19 @@ Route::prefix('v1')->group(function (): void {
         Route::get('reports/exports', [ReportController::class, 'exports'])->middleware('permission:reports.export');
         Route::post('reports/exports', [ReportController::class, 'export'])->middleware('permission:reports.export');
         Route::get('reports/exports/{export}/download', [ReportController::class, 'download'])->middleware('permission:reports.export');
+
+        Route::get('complaints/options', [CustomerComplaintController::class, 'options'])->middleware('permission:complaints.view,complaints.create,complaints.manage');
+        Route::get('complaints/overview', [CustomerComplaintController::class, 'overview'])->middleware('permission:complaints.view');
+        Route::get('complaints/sources', [CustomerComplaintController::class, 'sources'])->middleware('permission:complaints.create');
+        Route::get('complaints/staff', [CustomerComplaintController::class, 'staff'])->middleware('permission:complaints.create,complaints.manage');
+        Route::get('complaints', [CustomerComplaintController::class, 'index'])->middleware('permission:complaints.view');
+        Route::post('complaints', [CustomerComplaintController::class, 'store'])->middleware(['permission:complaints.create', 'idempotent:complaint']);
+        Route::get('complaints/{complaint}', [CustomerComplaintController::class, 'show'])->middleware('permission:complaints.view,complaints.manage');
+        Route::patch('complaints/{complaint}', [CustomerComplaintController::class, 'update'])->middleware('permission:complaints.manage');
+        Route::post('complaints/{complaint}/events', [CustomerComplaintController::class, 'addEvent'])->middleware('permission:complaints.manage');
+        Route::post('complaints/{complaint}/resolve', [CustomerComplaintController::class, 'resolve'])->middleware('permission:complaints.manage');
+        Route::post('complaints/{complaint}/dismiss', [CustomerComplaintController::class, 'dismiss'])->middleware('permission:complaints.manage');
+        Route::post('complaints/{complaint}/reopen', [CustomerComplaintController::class, 'reopen'])->middleware('permission:complaints.manage');
 
         Route::get('finance/summary', [FinanceController::class, 'summary'])->middleware('permission:finance.view');
         Route::get('finance/entries', [FinanceController::class, 'entries'])->middleware('permission:finance.view');

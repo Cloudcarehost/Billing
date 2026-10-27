@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from './components/AppShell'
 import { AuthProvider, useAuth } from './features/auth/AuthContext'
-import { can, firstAccessiblePath, isOwner } from './features/auth/permissions'
+import { can, canAny, firstAccessiblePath, isOwner } from './features/auth/permissions'
 import { ForgotPasswordPage, LoginPage, OnboardingPage, ResetPasswordPage } from './pages/AuthPages'
 import { PlaceholderPage } from './pages/DashboardPage'
 import { OrdersPage, TablesPage } from './pages/RealtimeOperationsPages'
@@ -18,6 +18,7 @@ const InventoryPage = lazy(() => import('./pages/PhaseThreePages').then((module)
 const LiveDashboardPage = lazy(() => import('./pages/PhaseThreePages').then((module) => ({ default: module.LiveDashboardPage })))
 const ReportsPage = lazy(() => import('./pages/ReportsPage').then((module) => ({ default: module.ReportsPage })))
 const MoneyPage = lazy(() => import('./pages/MoneyPage').then((module) => ({ default: module.MoneyPage })))
+const ComplaintsPage = lazy(() => import('./pages/ComplaintsPage').then((module) => ({ default: module.ComplaintsPage })))
 const AccountSecurityPage = lazy(() => import('./pages/SettingsPages').then((module) => ({ default: module.AccountSecurityPage })))
 const HotelSettingsPage = lazy(() => import('./pages/SettingsPages').then((module) => ({ default: module.HotelSettingsPage })))
 const OutletsPage = lazy(() => import('./pages/SettingsPages').then((module) => ({ default: module.OutletsPage })))
@@ -37,6 +38,11 @@ function LazyRoute({ children }: { children: ReactNode }) {
 function PermissionRoute({ permission, children }: { permission: string; children: ReactNode }) {
   const { session } = useAuth()
   return can(session, permission) ? children : <Navigate to={firstAccessiblePath(session)} replace />
+}
+
+function AnyPermissionRoute({ permissions, children }: { permissions: string[]; children: ReactNode }) {
+  const { session } = useAuth()
+  return canAny(session, permissions) ? children : <Navigate to={firstAccessiblePath(session)} replace />
 }
 
 function OwnerRoute({ children }: { children: ReactNode }) {
@@ -61,6 +67,7 @@ function ProtectedApp() {
     <Route path="inventory" element={<LazyRoute><PermissionRoute permission="inventory.view"><InventoryPage /></PermissionRoute></LazyRoute>} />
     <Route path="reports" element={<LazyRoute><PermissionRoute permission="reports.view"><ReportsPage /></PermissionRoute></LazyRoute>} />
     <Route path="money" element={<LazyRoute><PermissionRoute permission="finance.view"><MoneyPage /></PermissionRoute></LazyRoute>} />
+    <Route path="complaints" element={<LazyRoute><AnyPermissionRoute permissions={['complaints.view', 'complaints.create', 'complaints.manage']}><ComplaintsPage /></AnyPermissionRoute></LazyRoute>} />
     <Route path="customers" element={<PermissionRoute permission="customers.view"><PlaceholderPage title="Customers" description="Customer management will be added with billing." /></PermissionRoute>} />
     <Route path="settings/hotel" element={<LazyRoute><PermissionRoute permission="settings.manage"><HotelSettingsPage /></PermissionRoute></LazyRoute>} />
     <Route path="settings/outlets" element={<LazyRoute><PermissionRoute permission="settings.manage"><OutletsPage /></PermissionRoute></LazyRoute>} />

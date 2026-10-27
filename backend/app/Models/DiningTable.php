@@ -50,4 +50,9 @@ class DiningTable extends Model
     {
         return $this->hasOne(TablePublicLink::class);
     }
+
+    public function reportedComplaints(): HasMany
+    {
+        return $this->hasMany(CustomerComplaint::class, 'reported_table_id');
+    }
 }

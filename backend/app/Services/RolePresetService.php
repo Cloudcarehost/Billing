@@ -23,14 +23,17 @@ class RolePresetService
                 'kitchen.view', 'kitchen.update', 'billing.view', 'billing.request', 'billing.create', 'billing.close_without_sale', 'billing.discount', 'billing.void',
                 'billing.refund', 'payments.manage', 'catalog.view', 'catalog.manage', 'inventory.view',
                 'inventory.receive', 'inventory.adjust', 'customers.view', 'customers.manage', 'reports.view',
+                'complaints.view', 'complaints.create', 'complaints.manage',
                 'reports.export', 'finance.view', 'finance.manage', 'users.view', 'users.manage', 'outlets.all',
             ]],
             'cashier' => ['name' => 'Counter / Cashier', 'is_owner' => false, 'permissions' => [
                 'dashboard.view', 'tables.view', 'sessions.open', 'sessions.assign', 'orders.view', 'orders.create', 'orders.cancel', 'billing.view', 'billing.request', 'billing.create',
                 'billing.close_without_sale', 'billing.discount', 'payments.manage', 'customers.view', 'customers.manage',
+                'complaints.view', 'complaints.create',
             ]],
             'waiter' => ['name' => 'Waiter', 'is_owner' => false, 'permissions' => [
                 'tables.view', 'sessions.open', 'orders.view', 'orders.create', 'orders.cancel', 'billing.request', 'customers.view',
+                'complaints.create',
             ]],
             'kitchen' => ['name' => 'Kitchen', 'is_owner' => false, 'permissions' => [
                 'kitchen.view', 'kitchen.update', 'orders.view', 'orders.cancel', 'orders.cancel_prepared',
