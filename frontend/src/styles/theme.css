@@ -346,6 +346,48 @@ button, input, select, textarea { font: inherit; } button { cursor: pointer; } a
   .reports-page .page-heading { display: flex !important; }
 }
 
+/* Staff leave and private notes */
+.staff-view-tabs { display: inline-flex; gap: 4px; margin: -8px 0 18px; padding: 4px; border: 1px solid var(--color-line); border-radius: 10px; background: white; box-shadow: var(--shadow-card); }
+.staff-view-tabs button { display: inline-flex; align-items: center; gap: 7px; min-height: 38px; padding: 0 14px; border: 0; border-radius: 7px; color: var(--color-text); background: transparent; font-size: 11px; font-weight: 800; }
+.staff-view-tabs button.active { color: white; background: var(--color-primary); }
+.staff-notes-action { color: var(--color-primary); }
+.staff-record-form { display: grid; gap: 13px; }
+.staff-record-date-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
+.staff-record-finance-note { display: flex; align-items: flex-start; gap: 7px; padding: 10px; border-radius: 7px; color: #765000; background: var(--color-amber-soft); font-size: 10px; }
+.staff-record-finance-note svg { flex: 0 0 auto; }
+.staff-record-separation { display: flex; align-items: center; gap: 7px; padding: 10px 17px; border-bottom: 1px solid #f2dfae; color: #765000; background: #fffbef; font-size: 10px; }
+.staff-record-filters { display: grid; grid-template-columns: 1.1fr 1fr 1fr 1fr 1.4fr auto; align-items: end; gap: 9px; padding: 14px 17px; border-bottom: 1px solid var(--color-line); background: #fbfcfd; }
+.staff-record-filters .button { min-height: 37px; }
+.staff-record-list { display: grid; }
+.staff-record-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 12px; padding: 14px 17px; border-bottom: 1px solid var(--color-line); }
+.staff-record-item:last-child { border-bottom: 0; }
+.staff-record-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--color-primary); background: var(--color-primary-soft); }
+.staff-record-item.advance_paid .staff-record-icon, .staff-record-item.extra_paid .staff-record-icon { color: #996300; background: var(--color-amber-soft); }
+.staff-record-item.note .staff-record-icon { color: var(--color-blue); background: var(--color-blue-soft); }
+.staff-record-item header { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.staff-record-item header strong { font-size: 12px; }
+.staff-record-item header span { padding: 3px 7px; border-radius: 99px; color: var(--color-primary); background: var(--color-primary-soft); font-size: 9px; font-weight: 800; }
+.staff-record-item p { margin-top: 3px; color: var(--color-text); font-size: 10px; text-transform: capitalize; }
+.staff-record-item > div > small { margin-top: 5px; color: var(--color-text); font-size: 10px; white-space: pre-wrap; }
+.staff-record-item footer { margin-top: 6px; color: var(--color-muted); font-size: 9px; }
+.staff-record-side { display: grid; justify-items: end; gap: 8px; }
+.staff-record-side > b { color: var(--color-ink); font-size: 12px; text-align: right; }
+.staff-record-side > b small { margin-top: 2px; font-size: 8px; }
+.staff-record-side > div { display: flex; align-items: center; gap: 3px; }
+.staff-record-side .row-action { width: 34px; height: 34px; border-radius: 7px; }
+.staff-record-side .row-action:hover { background: #eef3f6; }
+@media (max-width: 1050px) { .staff-record-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 760px) {
+  .staff-view-tabs { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
+  .staff-view-tabs button { justify-content: center; min-height: 44px; }
+  .staff-record-date-grid, .staff-record-filters { grid-template-columns: 1fr; }
+  .staff-record-filters .button { min-height: 44px; }
+  .staff-record-item { grid-template-columns: auto minmax(0, 1fr); }
+  .staff-record-side { grid-column: 2; grid-template-columns: 1fr auto; align-items: center; justify-items: start; width: 100%; }
+  .staff-record-side > b { text-align: left; }
+  .staff-record-side > div { justify-self: end; }
+}
+
 /* Customer complaints */
 .complaint-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 17px; }
 .complaint-metric { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto auto; gap: 1px 11px; min-height: 112px; padding: 16px; border: 1px solid var(--color-line); border-radius: var(--radius-md); background: white; box-shadow: var(--shadow-card); }

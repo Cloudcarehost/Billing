@@ -1,4 +1,4 @@
-import { Check, CirclePlus, MonitorSmartphone, Pencil, ShieldAlert, ShieldCheck, Store, Trash2, UserPlus, Users } from 'lucide-react'
+import { Banknote, CalendarDays, Check, CirclePlus, MonitorSmartphone, NotebookTabs, Pencil, ShieldAlert, ShieldCheck, Store, Trash2, UserPlus, Users } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent, InputHTMLAttributes, ReactNode } from 'react'
 import { Modal, ConfirmDialog } from '../components/ui/Feedback'
@@ -6,7 +6,7 @@ import { useAuth } from '../features/auth/AuthContext'
 import { can, isOwner } from '../features/auth/permissions'
 import { api, errorMessage } from '../lib/api'
 import { FLOOR_SOUND_PREVIEWS, playFloorSound } from '../features/notifications/floorAlerts'
-import type { ApiEnvelope, AuditLog, DeviceSession, Hotel, Outlet, Paginated, Permission, Role, StaffMember } from '../types/api'
+import type { ApiEnvelope, AuditLog, DeviceSession, Hotel, Outlet, Paginated, Permission, Role, StaffMember, StaffRecord, StaffRecordType } from '../types/api'
 
 function Header({ eyebrow, title, text, action }: { eyebrow: string; title: string; text: string; action?: ReactNode }) { return <section className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{text}</p></div>{action}</section> }
 function Notice({ error, success }: { error?: string; success?: string }) { return <>{error && <p className="form-error form-notice">{error}</p>}{success && <p className="form-success form-notice"><Check size={16} />{success}</p>}</> }
@@ -156,6 +156,10 @@ function salaryDueOnFromForm(cycle: string, values: FormData): string | null {
   return null
 }
 
+const staffRecordLabel = (type: StaffRecordType) => ({ leave: 'Leave', advance_paid: 'Advance paid', extra_paid: 'Extra payment', note: 'General note' })[type]
+const todayInput = () => new Date().toLocaleDateString('en-CA')
+const displayDate = (value?: string | null) => value ? new Date(`${value.slice(0, 10)}T12:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'
+
 export function StaffPage() {
   const { session } = useAuth()
   const [staff, setStaff] = useState<StaffMember[]>([])
@@ -166,6 +170,20 @@ export function StaffPage() {
   const [payCycle, setPayCycle] = useState('')
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [view, setView] = useState<'team' | 'records'>('team')
+  const [records, setRecords] = useState<StaffRecord[]>([])
+  const [addingRecord, setAddingRecord] = useState(false)
+  const [editingRecord, setEditingRecord] = useState<StaffRecord | null>(null)
+  const [deletingRecord, setDeletingRecord] = useState<StaffRecord | null>(null)
+  const [recordType, setRecordType] = useState<StaffRecordType>('leave')
+  const [recordStaff, setRecordStaff] = useState('')
+  const [recordFilterType, setRecordFilterType] = useState('')
+  const [recordFrom, setRecordFrom] = useState('')
+  const [recordTo, setRecordTo] = useState('')
+  const [recordSearch, setRecordSearch] = useState('')
+  const [recordQuery, setRecordQuery] = useState('')
+  const [savingRecord, setSavingRecord] = useState(false)
+  const [loadingRecords, setLoadingRecords] = useState(false)
   const mayManageStaff = can(session, 'users.manage')
   const load = async () => {
     try {
@@ -181,8 +199,20 @@ export function StaffPage() {
       setError(errorMessage(err))
     }
   }
+  const loadRecords = useCallback(async () => {
+    setLoadingRecords(true)
+    try {
+      const response = await api.get<Paginated<StaffRecord>>('/api/v1/staff-records', { params: { user_id: recordStaff || undefined, record_type: recordFilterType || undefined, from: recordFrom || undefined, to: recordTo || undefined, search: recordQuery || undefined, per_page: 100 } })
+      setRecords(response.data.data)
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setLoadingRecords(false)
+    }
+  }, [recordFilterType, recordFrom, recordQuery, recordStaff, recordTo])
   useEffect(() => { const task = window.setTimeout(() => { void load() }, 0); return () => window.clearTimeout(task) }, [])
-  useEffect(() => { setPayCycle(editing?.membership.pay_cycle ?? '') }, [editing, adding])
+  useEffect(() => { if (view !== 'records') return; const task = window.setTimeout(() => { void loadRecords() }, 0); return () => window.clearTimeout(task) }, [loadRecords, view])
+  useEffect(() => { const task = window.setTimeout(() => setPayCycle(editing?.membership.pay_cycle ?? ''), 0); return () => window.clearTimeout(task) }, [editing, adding])
   function closeForm() { setAdding(false); setEditing(null); setPayCycle('') }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -217,10 +247,54 @@ export function StaffPage() {
       setError(errorMessage(err))
     }
   }
+  async function submitRecord(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const type = String(form.get('record_type')) as StaffRecordType
+    const amount = String(form.get('amount') ?? '').trim()
+    const data = {
+      user_id: Number(form.get('user_id')),
+      record_type: type,
+      start_date: String(form.get('start_date')),
+      end_date: type === 'leave' ? String(form.get('end_date') || form.get('start_date')) : null,
+      leave_duration: type === 'leave' ? String(form.get('leave_duration')) : null,
+      amount: (type === 'advance_paid' || type === 'extra_paid') && amount ? Number(amount) : null,
+      note: String(form.get('note') ?? '').trim() || null,
+    }
+    setSavingRecord(true); setError(''); setMessage('')
+    try {
+      if (editingRecord) await api.patch(`/api/v1/staff-records/${editingRecord.id}`, data)
+      else await api.post('/api/v1/staff-records', data)
+      setAddingRecord(false)
+      setEditingRecord(null)
+      setMessage(editingRecord ? 'Staff record updated. Money and salary calculations remain unchanged.' : 'Staff record added. It is kept separate from Money and salary calculations.')
+      await loadRecords()
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setSavingRecord(false)
+    }
+  }
+  async function removeRecord() {
+    if (!deletingRecord || savingRecord) return
+    setSavingRecord(true); setError(''); setMessage('')
+    try {
+      await api.delete(`/api/v1/staff-records/${deletingRecord.id}`)
+      setDeletingRecord(null)
+      setMessage('Staff record removed. No Money or salary data was changed.')
+      await loadRecords()
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setSavingRecord(false)
+    }
+  }
+  function closeRecordForm() { if (savingRecord) return; setAddingRecord(false); setEditingRecord(null) }
   const formOpen = adding || editing !== null
   const outletChoices = outlets.length ? outlets : (session?.outlets ?? [])
   return <>
-    <Header eyebrow="SETTINGS" title="Staff access" text="Invite your team, pay them on a cycle, and assign a second Owner when you need another full admin." action={mayManageStaff ? <button className="button button-primary" type="button" onClick={() => { setEditing(null); setAdding(true); setMessage('') }}><UserPlus size={17} />Add staff</button> : undefined} />
+    <Header eyebrow="SETTINGS" title="Staff access" text="Manage team access and keep private leave or payment notes without changing Money calculations." action={mayManageStaff ? (view === 'team' ? <button className="button button-primary" type="button" onClick={() => { setEditing(null); setAdding(true); setMessage('') }}><UserPlus size={17} />Add staff</button> : <button className="button button-primary" type="button" onClick={() => { setEditingRecord(null); setRecordType('leave'); setAddingRecord(true); setMessage('') }}><CirclePlus size={17} />Add record</button>) : undefined} />
+    <div className="staff-view-tabs" role="tablist" aria-label="Staff sections"><button type="button" role="tab" aria-selected={view === 'team'} className={view === 'team' ? 'active' : ''} onClick={() => setView('team')}><Users size={16} />Team members</button><button type="button" role="tab" aria-selected={view === 'records'} className={view === 'records' ? 'active' : ''} onClick={() => setView('records')}><NotebookTabs size={16} />Leave & notes</button></div>
     <Modal open={formOpen && mayManageStaff} title={editing ? `Edit ${editing.name}` : 'Add staff'} description={editing ? 'Update role, outlets, salary, or reset their password.' : 'Owner is full admin for this hotel. Salary is optional and only used on the Money tab.'} onClose={closeForm}>
       <form key={editing?.id ?? 'new'} className="compact-form" onSubmit={submit}>
         <div className="form-grid">
@@ -241,11 +315,30 @@ export function StaffPage() {
         </div>
       </form>
     </Modal>
+    <Modal open={(addingRecord || editingRecord !== null) && mayManageStaff} title={editingRecord ? `Edit ${staffRecordLabel(editingRecord.record_type)}` : 'Add staff record'} description="This is a private note only. It will not change Money, expenses, salary, or reports." onClose={closeRecordForm}>
+      <form key={editingRecord?.id ?? 'new-record'} className="staff-record-form" onSubmit={submitRecord}>
+        <label className="field"><span>Staff member</span><select name="user_id" required defaultValue={(editingRecord?.user_id ?? recordStaff) || ''}><option value="" disabled>Select staff</option>{staff.map((member) => <option key={member.id} value={member.id}>{member.name} · {member.membership.role?.name ?? 'Staff'}</option>)}</select></label>
+        <label className="field"><span>Record type</span><select name="record_type" value={recordType} onChange={(event) => setRecordType(event.target.value as StaffRecordType)}><option value="leave">Leave</option><option value="advance_paid">Salary advance paid</option><option value="extra_paid">Extra payment made</option><option value="note">General note</option></select></label>
+        <div className="staff-record-date-grid"><Input label={recordType === 'leave' ? 'Start date' : 'Date'} name="start_date" type="date" required defaultValue={editingRecord?.start_date.slice(0, 10) ?? todayInput()} />{recordType === 'leave' && <Input label="End date" name="end_date" type="date" defaultValue={editingRecord?.end_date?.slice(0, 10) ?? editingRecord?.start_date.slice(0, 10) ?? todayInput()} />}</div>
+        {recordType === 'leave' && <label className="field"><span>Leave duration</span><select name="leave_duration" defaultValue={editingRecord?.leave_duration ?? 'full_day'}><option value="full_day">Full day</option><option value="first_half">First half</option><option value="second_half">Second half</option></select></label>}
+        {(recordType === 'advance_paid' || recordType === 'extra_paid') && <Input label="Amount (optional, note only)" name="amount" type="number" min="0.01" step="0.01" defaultValue={editingRecord?.amount ?? ''} />}
+        <label className="field"><span>{recordType === 'note' ? 'Note' : 'Reason / note (optional)'}</span><textarea name="note" rows={4} maxLength={5000} required={recordType === 'note'} defaultValue={editingRecord?.note ?? ''} placeholder={recordType === 'leave' ? 'Example: Family function' : recordType === 'note' ? 'Write the staff note' : 'Example: Paid in cash by owner'} /></label>
+        <p className="staff-record-finance-note"><Banknote size={15} />Amounts entered here are informational and never enter the Money ledger.</p>
+        <div className="form-action-row"><button className="button button-primary button-touch" disabled={savingRecord}>{savingRecord ? 'Saving…' : editingRecord ? 'Save changes' : 'Save record'}</button><button className="button button-secondary button-touch" type="button" disabled={savingRecord} onClick={closeRecordForm}>Close</button></div>
+      </form>
+    </Modal>
+    <ConfirmDialog open={deletingRecord !== null} title="Remove staff record?" text={deletingRecord ? `Remove the ${staffRecordLabel(deletingRecord.record_type).toLowerCase()} record for ${deletingRecord.staff_name_snapshot}? This removes only the note and does not change Money or salary.` : ''} confirmLabel={savingRecord ? 'Removing…' : 'Remove record'} onConfirm={() => void removeRecord()} onClose={() => !savingRecord && setDeletingRecord(null)} />
     <Notice error={error} success={message} />
-    <section className="data-card">
+    {view === 'team' && <section className="data-card">
       <div className="data-card-heading"><Users size={19} /><h2>Team members</h2><span>{staff.length} total</span></div>
-        <div className="data-list">{staff.map((member) => <div className="data-row" key={member.id}><span className="member-avatar">{member.name.slice(0, 1)}</span><div><strong>{member.name}</strong><small>{member.email}{member.membership.salary_amount ? ` · ${member.membership.salary_amount} ${payLabel(member.membership.pay_cycle, member.membership.salary_due_on)}` : ''}</small></div><span className={member.membership.role?.is_owner ? 'owner-badge' : 'role-pill'}>{member.membership.role?.is_owner ? 'Owner / full admin' : (member.membership.role?.name ?? 'No role')}</span><small>{member.membership.outlet_ids?.length ?? 0} outlet{member.membership.outlet_ids?.length === 1 ? '' : 's'}</small><span className={`status-badge ${member.membership.is_active ? 'status-green' : 'status-red'}`}>{member.membership.is_active ? 'Active' : 'Inactive'}</span>{mayManageStaff && <button className="row-action" type="button" title={`Edit ${member.name}`} onClick={() => { setAdding(false); setEditing(member); setMessage(''); setError('') }}><Pencil size={16} /></button>}</div>)}{!staff.length && <Empty text="No staff members found." />}</div>
-    </section>
+        <div className="data-list">{staff.map((member) => <div className="data-row" key={member.id}><span className="member-avatar">{member.name.slice(0, 1)}</span><div><strong>{member.name}</strong><small>{member.email}{member.membership.salary_amount ? ` · ${member.membership.salary_amount} ${payLabel(member.membership.pay_cycle, member.membership.salary_due_on)}` : ''}</small></div><span className={member.membership.role?.is_owner ? 'owner-badge' : 'role-pill'}>{member.membership.role?.is_owner ? 'Owner / full admin' : (member.membership.role?.name ?? 'No role')}</span><small>{member.membership.outlet_ids?.length ?? 0} outlet{member.membership.outlet_ids?.length === 1 ? '' : 's'}</small><span className={`status-badge ${member.membership.is_active ? 'status-green' : 'status-red'}`}>{member.membership.is_active ? 'Active' : 'Inactive'}</span><button className="row-action staff-notes-action" type="button" title={`Leave and notes for ${member.name}`} onClick={() => { setRecordStaff(String(member.id)); setView('records') }}><NotebookTabs size={16} /></button>{mayManageStaff && <button className="row-action" type="button" title={`Edit ${member.name}`} onClick={() => { setAdding(false); setEditing(member); setMessage(''); setError('') }}><Pencil size={16} /></button>}</div>)}{!staff.length && <Empty text="No staff members found." />}</div>
+    </section>}
+    {view === 'records' && <section className="data-card staff-records-card">
+      <div className="data-card-heading"><CalendarDays size={19} /><h2>Leave & notes</h2><span>{records.length} shown</span></div>
+      <p className="staff-record-separation"><Banknote size={15} />Reference history only — no entry here affects Money, expenses, salary dues, or business reports.</p>
+      <form className="staff-record-filters" onSubmit={(event) => { event.preventDefault(); setRecordQuery(recordSearch.trim()) }}><label className="field"><span>Staff</span><select value={recordStaff} onChange={(event) => setRecordStaff(event.target.value)}><option value="">All staff</option>{staff.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label><label className="field"><span>Type</span><select value={recordFilterType} onChange={(event) => setRecordFilterType(event.target.value)}><option value="">All records</option><option value="leave">Leave</option><option value="advance_paid">Advance paid</option><option value="extra_paid">Extra payment</option><option value="note">General note</option></select></label><Input label="From" type="date" value={recordFrom} onChange={(event) => setRecordFrom(event.target.value)} /><Input label="To" type="date" value={recordTo} onChange={(event) => setRecordTo(event.target.value)} /><label className="field staff-record-search"><span>Search notes</span><input value={recordSearch} onChange={(event) => setRecordSearch(event.target.value)} placeholder="Name, role or note" /></label><button className="button button-secondary" disabled={loadingRecords}>{loadingRecords ? 'Loading…' : 'Search'}</button></form>
+      <div className="staff-record-list">{records.map((record) => <article key={record.id} className={`staff-record-item ${record.record_type}`}><span className="staff-record-icon">{record.record_type === 'leave' ? <CalendarDays size={18} /> : record.record_type === 'note' ? <NotebookTabs size={18} /> : <Banknote size={18} />}</span><div><header><strong>{record.staff_name_snapshot}</strong><span>{staffRecordLabel(record.record_type)}</span></header><p>{displayDate(record.start_date)}{record.record_type === 'leave' && record.end_date && record.end_date.slice(0, 10) !== record.start_date.slice(0, 10) ? ` – ${displayDate(record.end_date)}` : ''}{record.leave_duration ? ` · ${record.leave_duration.replaceAll('_', ' ')}` : ''}</p>{record.note && <small>{record.note}</small>}<footer>{record.role_name_snapshot ?? 'Staff'} · Added by {record.creator?.name ?? 'Unknown'}</footer></div><aside className="staff-record-side">{record.amount && <b>{new Intl.NumberFormat('en-IN', { style: 'currency', currency: record.currency_code_snapshot ?? session?.hotel.currency_code ?? 'INR' }).format(Number(record.amount))}<small>Note only</small></b>}{mayManageStaff && <div><button type="button" className="row-action" title={`Edit ${staffRecordLabel(record.record_type)}`} onClick={() => { setRecordType(record.record_type); setAddingRecord(false); setEditingRecord(record); setMessage(''); setError('') }}><Pencil size={16} /></button><button type="button" className="row-action danger" title={`Remove ${staffRecordLabel(record.record_type)}`} onClick={() => setDeletingRecord(record)}><Trash2 size={16} /></button></div>}</aside></article>)}{!loadingRecords && !records.length && <Empty text="No leave or staff notes match these filters." />}</div>
+    </section>}
   </>
 }
 

@@ -109,6 +109,11 @@ class User extends Authenticatable
         return $this->hasMany(CustomerComplaintEvent::class, 'actor_id');
     }
 
+    public function staffRecords(): HasMany
+    {
+        return $this->hasMany(StaffRecord::class);
+    }
+
     public function hasPermissionForHotel(string $permission, Hotel $hotel): bool
     {
         $membership = $this->hotels()

@@ -88,4 +88,9 @@ class Hotel extends Model
     {
         return $this->hasMany(CustomerComplaint::class);
     }
+
+    public function staffRecords(): HasMany
+    {
+        return $this->hasMany(StaffRecord::class);
+    }
 }

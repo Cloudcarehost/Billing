@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\RecipeController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\RoleController;
 use App\Http\Controllers\Api\SecurityController;
+use App\Http\Controllers\Api\StaffRecordController;
 use App\Http\Controllers\Api\SupplierController;
 use App\Http\Controllers\Api\TablePublicLinkController;
 use App\Http\Controllers\Api\UserController;
@@ -57,6 +58,10 @@ Route::prefix('v1')->group(function (): void {
         Route::get('users', [UserController::class, 'index']);
         Route::post('users', [UserController::class, 'store']);
         Route::match(['put', 'patch'], 'users/{user}', [UserController::class, 'update']);
+        Route::get('staff-records', [StaffRecordController::class, 'index'])->middleware('permission:users.view');
+        Route::post('staff-records', [StaffRecordController::class, 'store'])->middleware('permission:users.manage');
+        Route::match(['put', 'patch'], 'staff-records/{record}', [StaffRecordController::class, 'update'])->middleware('permission:users.manage');
+        Route::delete('staff-records/{record}', [StaffRecordController::class, 'destroy'])->middleware('permission:users.manage');
 
         Route::get('roles', [RoleController::class, 'index']);
         Route::post('roles', [RoleController::class, 'store'])->middleware('owner');
