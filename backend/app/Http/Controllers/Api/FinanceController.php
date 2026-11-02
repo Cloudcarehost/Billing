@@ -6,6 +6,7 @@ use App\Models\Hotel;
 use App\Models\LedgerEntry;
 use App\Models\StandingCost;
 use App\Services\FinanceService;
+use App\Services\ReportService;
 use App\Support\HotelDate;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -44,6 +45,7 @@ class FinanceController extends ApiController
             'hotel_id' => $hotel->id,
             'created_by' => $request->user()->id,
         ]);
+        ReportService::invalidateDashboard($hotel->id);
 
         return $this->success($entry->load('creator:id,name'), 'Entry saved.', 201);
     }
@@ -53,6 +55,7 @@ class FinanceController extends ApiController
         $hotel = $request->attributes->get('currentHotel');
         $entry = LedgerEntry::query()->where('hotel_id', $hotel->id)->findOrFail($entry);
         $entry->update($this->entryData($request, $entry));
+        ReportService::invalidateDashboard($hotel->id);
 
         return $this->success($entry->fresh()->load('creator:id,name'), 'Entry updated.');
     }
@@ -62,6 +65,7 @@ class FinanceController extends ApiController
         $hotel = $request->attributes->get('currentHotel');
         $entry = LedgerEntry::query()->where('hotel_id', $hotel->id)->findOrFail($entry);
         $entry->delete();
+        ReportService::invalidateDashboard($hotel->id);
 
         return $this->success(['id' => $entry->id], 'Entry deleted.');
     }
@@ -80,6 +84,7 @@ class FinanceController extends ApiController
             ...$this->standingData($request),
             'hotel_id' => $hotel->id,
         ]);
+        ReportService::invalidateDashboard($hotel->id);
 
         return $this->success($cost, 'Fixed bill saved.', 201);
     }
@@ -89,6 +94,7 @@ class FinanceController extends ApiController
         $hotel = $request->attributes->get('currentHotel');
         $cost = StandingCost::query()->where('hotel_id', $hotel->id)->findOrFail($cost);
         $cost->update($this->standingData($request, $cost));
+        ReportService::invalidateDashboard($hotel->id);
 
         return $this->success($cost->fresh(), 'Fixed bill updated.');
     }

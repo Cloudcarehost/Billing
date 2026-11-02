@@ -27,14 +27,14 @@ class ReportService
         Cache::forever($key, (int) Cache::get($key, 0) + 1);
     }
 
-    public function dashboard(Hotel $hotel, array $filters): array
+    public function dashboard(Hotel $hotel, array $filters, FinanceService $finance): array
     {
         $from = $filters['from'] ?? now($hotel->timezone)->toDateString();
         $to = $filters['to'] ?? $from;
         $outletId = $filters['outlet_id'] ?? null;
         $version = Cache::get("reports:dashboard-version:{$hotel->id}", 0);
 
-        return Cache::remember("reports:dashboard:{$hotel->id}:{$version}:{$outletId}:{$from}:{$to}", now()->addMinutes(3), function () use ($hotel, $from, $to, $outletId) {
+        return Cache::remember("reports:dashboard:{$hotel->id}:{$version}:{$outletId}:{$from}:{$to}", now()->addMinutes(3), function () use ($hotel, $from, $to, $outletId, $finance) {
             $invoices = Invoice::query()->where('invoices.hotel_id', $hotel->id)->whereBetween('invoices.business_date', [$from, $to.' 23:59:59'])->where('invoices.status', 'issued')->when($outletId, fn ($query) => $query->where('invoices.outlet_id', $outletId));
             $totals = (clone $invoices)->selectRaw('COUNT(*) as bills, COALESCE(SUM(total_amount), 0) as sales, COALESCE(SUM(tax_amount), 0) as tax, COALESCE(SUM(discount_amount), 0) as discount, SUM(CASE WHEN discount_amount > 0 THEN 1 ELSE 0 END) as discounted_bills, COALESCE(SUM((subtotal - discount_amount) - (SELECT COALESCE(SUM(invoice_items.unit_cost * invoice_items.quantity), 0) FROM invoice_items WHERE invoice_items.invoice_id = invoices.id)), 0) as gross_profit')->first();
             $paymentTotals = (clone $invoices)->join('payments', 'payments.invoice_id', '=', 'invoices.id')->where('payments.type', 'payment')->selectRaw('payments.method, SUM(payments.amount) as amount')->groupBy('payments.method')->pluck('amount', 'method');
@@ -53,8 +53,12 @@ class ReportService
                 ->when($outletId, fn ($query) => $query->where('outlet_id', $outletId))
                 ->whereHas('diningTable', fn ($query) => $query->where('service_type', 'dine_in')->orWhereNull('service_type'))
                 ->count();
+            $days = CarbonImmutable::parse($from)->diffInDays(CarbonImmutable::parse($to)) + 1;
+            $expenseTotal = $finance->expenseTotal($hotel, $from, $to);
+            $averageDailyEarnings = Money::fromMinor((int) round(Money::toMinor($totals->sales) / $days, 0, PHP_ROUND_HALF_UP));
+            $averageDailyExpenses = Money::fromMinor((int) round(Money::toMinor($expenseTotal) / $days, 0, PHP_ROUND_HALF_UP));
 
-            return ['period' => compact('from', 'to'), 'sales' => ['amount' => (string) $totals->sales, 'bills' => (int) $totals->bills, 'average_bill' => $totals->bills ? Money::fromMinor((int) round(Money::toMinor($totals->sales) / $totals->bills)) : Money::fromMinor(0), 'tax_collected' => (string) $totals->tax, 'gross_profit_estimate' => (string) $totals->gross_profit], 'discounts' => ['amount' => Money::fromMinor(Money::toMinor($totals->discount ?? 0)), 'bills' => (int) $totals->discounted_bills], 'payment_totals' => $paymentTotals, 'pending_bills' => $pending, 'tables' => ['total' => $tableCount, 'available' => max(0, $tableCount - $occupiedTableCount), 'occupied' => $occupiedTableCount], 'top_items' => $topItems, 'category_sales' => $categorySales, 'waiter_sales' => $waiterSales, 'low_stock' => $lowStock, 'voided_bills' => Invoice::query()->where('hotel_id', $hotel->id)->whereBetween('business_date', [$from, $to.' 23:59:59'])->where('status', 'voided')->count(), 'cancelled_items' => OrderItem::query()->where('status', 'cancelled')->whereHas('order.diningSession', fn ($query) => $query->where('hotel_id', $hotel->id)->whereBetween('opened_at', [$from.' 00:00:00', $to.' 23:59:59']))->count(), 'wastage' => StockWastage::query()->where('hotel_id', $hotel->id)->whereBetween('occurred_at', [$from.' 00:00:00', $to.' 23:59:59'])->sum('quantity')];
+            return ['period' => compact('from', 'to'), 'sales' => ['amount' => (string) $totals->sales, 'bills' => (int) $totals->bills, 'average_bill' => $totals->bills ? Money::fromMinor((int) round(Money::toMinor($totals->sales) / $totals->bills)) : Money::fromMinor(0), 'tax_collected' => (string) $totals->tax, 'gross_profit_estimate' => (string) $totals->gross_profit], 'daily_averages' => ['days' => $days, 'earnings' => $averageDailyEarnings, 'expenses' => $averageDailyExpenses], 'discounts' => ['amount' => Money::fromMinor(Money::toMinor($totals->discount ?? 0)), 'bills' => (int) $totals->discounted_bills], 'payment_totals' => $paymentTotals, 'pending_bills' => $pending, 'tables' => ['total' => $tableCount, 'available' => max(0, $tableCount - $occupiedTableCount), 'occupied' => $occupiedTableCount], 'top_items' => $topItems, 'category_sales' => $categorySales, 'waiter_sales' => $waiterSales, 'low_stock' => $lowStock, 'voided_bills' => Invoice::query()->where('hotel_id', $hotel->id)->whereBetween('business_date', [$from, $to.' 23:59:59'])->where('status', 'voided')->count(), 'cancelled_items' => OrderItem::query()->where('status', 'cancelled')->whereHas('order.diningSession', fn ($query) => $query->where('hotel_id', $hotel->id)->whereBetween('opened_at', [$from.' 00:00:00', $to.' 23:59:59']))->count(), 'wastage' => StockWastage::query()->where('hotel_id', $hotel->id)->whereBetween('occurred_at', [$from.' 00:00:00', $to.' 23:59:59'])->sum('quantity')];
         });
     }
 
@@ -138,6 +142,130 @@ class ReportService
                 'expenses' => Money::fromMinor($bucket['expenses']),
                 'surplus' => Money::fromMinor($bucket['net'] - $bucket['expenses']),
             ], $buckets)),
+        ];
+    }
+
+    /**
+     * Product profitability based on immutable invoice-item price and cost snapshots.
+     * Tax is excluded and invoice-level discounts are allocated proportionally to line subtotals.
+     *
+     * @return array<string, mixed>
+     */
+    public function productMargins(Hotel $hotel, array $filters): array
+    {
+        $from = $filters['from'];
+        $to = $filters['to'];
+        $outletId = $filters['outlet_id'] ?? null;
+        $categoryFilter = trim((string) ($filters['category'] ?? ''));
+        $search = trim((string) ($filters['search'] ?? ''));
+        $categoryExpression = "COALESCE(NULLIF(invoice_items.category_name, ''), categories.name, 'Uncategorised')";
+
+        $base = InvoiceItem::query()
+            ->join('invoices', 'invoices.id', '=', 'invoice_items.invoice_id')
+            ->leftJoin('products', 'products.id', '=', 'invoice_items.product_id')
+            ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
+            ->where('invoices.hotel_id', $hotel->id)
+            ->where('invoices.status', InvoiceStatus::Issued->value)
+            ->whereBetween('invoices.business_date', [$from, $to.' 23:59:59'])
+            ->when($outletId, fn ($query) => $query->where('invoices.outlet_id', $outletId));
+
+        $categories = (clone $base)
+            ->selectRaw($categoryExpression.' as category')
+            ->distinct()
+            ->orderBy('category')
+            ->pluck('category')
+            ->map(fn ($category) => (string) $category)
+            ->values()
+            ->all();
+
+        $rows = $base
+            ->when($categoryFilter !== '', fn ($query) => $query->whereRaw($categoryExpression.' = ?', [$categoryFilter]))
+            ->when($search !== '', fn ($query) => $query->where('invoice_items.item_name', 'like', '%'.$search.'%'))
+            ->selectRaw('invoice_items.product_id, invoice_items.item_name, '.$categoryExpression.' as category')
+            ->selectRaw('SUM(invoice_items.quantity) as quantity')
+            ->selectRaw('SUM(invoice_items.unit_price * invoice_items.quantity) as selling_value')
+            ->selectRaw('SUM(invoice_items.line_subtotal) as gross_sales')
+            ->selectRaw('SUM(invoice_items.unit_cost * invoice_items.quantity) as total_cost')
+            ->selectRaw('SUM(CASE WHEN invoices.subtotal > 0 THEN (invoice_items.line_subtotal * invoices.discount_amount / invoices.subtotal) ELSE 0 END) as allocated_discount')
+            ->groupBy('invoice_items.product_id', 'invoice_items.item_name', 'invoice_items.category_name', 'categories.name')
+            ->get();
+
+        $summary = [
+            'quantity' => 0.0,
+            'gross_sales' => 0,
+            'discounts' => 0,
+            'net_sales' => 0,
+            'total_cost' => 0,
+            'profit' => 0,
+            'missing_cost_items' => 0,
+            'low_margin_items' => 0,
+        ];
+        $items = [];
+
+        foreach ($rows as $row) {
+            $quantity = (float) $row->quantity;
+            $sellingMinor = Money::toMinor($row->selling_value);
+            $grossMinor = Money::toMinor($row->gross_sales);
+            $discountMinor = Money::toMinor($row->allocated_discount);
+            $netMinor = $grossMinor - $discountMinor;
+            $costMinor = Money::toMinor($row->total_cost);
+            $profitMinor = $netMinor - $costMinor;
+            $averageSellingMinor = $quantity > 0 ? (int) round($sellingMinor / $quantity, 0, PHP_ROUND_HALF_UP) : 0;
+            $averageCostMinor = $quantity > 0 ? (int) round($costMinor / $quantity, 0, PHP_ROUND_HALF_UP) : 0;
+            $unitMarginMinor = $averageSellingMinor - $averageCostMinor;
+            $marginPercent = $netMinor !== 0 ? round($profitMinor / $netMinor * 100, 1) : null;
+            $missingCost = $costMinor === 0;
+
+            $items[] = [
+                'product_id' => $row->product_id ? (int) $row->product_id : null,
+                'item' => (string) $row->item_name,
+                'category' => (string) $row->category,
+                'quantity' => $this->formatQuantity($quantity),
+                'average_selling_price' => Money::fromMinor($averageSellingMinor),
+                'average_cost_price' => Money::fromMinor($averageCostMinor),
+                'unit_margin' => Money::fromMinor($unitMarginMinor),
+                'gross_sales' => Money::fromMinor($grossMinor),
+                'discounts' => Money::fromMinor($discountMinor),
+                'net_sales' => Money::fromMinor($netMinor),
+                'total_cost' => Money::fromMinor($costMinor),
+                'profit' => Money::fromMinor($profitMinor),
+                'margin_percent' => $marginPercent,
+                'missing_cost' => $missingCost,
+            ];
+
+            $summary['quantity'] += $quantity;
+            $summary['gross_sales'] += $grossMinor;
+            $summary['discounts'] += $discountMinor;
+            $summary['net_sales'] += $netMinor;
+            $summary['total_cost'] += $costMinor;
+            $summary['profit'] += $profitMinor;
+            if ($missingCost) {
+                $summary['missing_cost_items']++;
+            }
+            if ($profitMinor <= 0) {
+                $summary['low_margin_items']++;
+            }
+        }
+
+        usort($items, fn (array $left, array $right) => Money::toMinor($right['profit']) <=> Money::toMinor($left['profit']));
+
+        return [
+            'period' => ['from' => $from, 'to' => $to],
+            'outlet_id' => $outletId,
+            'filters' => ['category' => $categoryFilter ?: null, 'search' => $search ?: null],
+            'categories' => $categories,
+            'summary' => [
+                'quantity' => $this->formatQuantity($summary['quantity']),
+                'gross_sales' => Money::fromMinor($summary['gross_sales']),
+                'discounts' => Money::fromMinor($summary['discounts']),
+                'net_sales' => Money::fromMinor($summary['net_sales']),
+                'total_cost' => Money::fromMinor($summary['total_cost']),
+                'profit' => Money::fromMinor($summary['profit']),
+                'margin_percent' => $summary['net_sales'] !== 0 ? round($summary['profit'] / $summary['net_sales'] * 100, 1) : null,
+                'missing_cost_items' => $summary['missing_cost_items'],
+                'low_margin_items' => $summary['low_margin_items'],
+            ],
+            'items' => $items,
         ];
     }
 

@@ -16,11 +16,11 @@ use Illuminate\Support\Facades\Storage;
 
 class ReportController extends ApiController
 {
-    public function dashboard(Request $request, ReportService $reports): JsonResponse
+    public function dashboard(Request $request, ReportService $reports, FinanceService $finance): JsonResponse
     {
         $hotel = $request->attributes->get('currentHotel');
 
-        return $this->success($reports->dashboard($hotel, $this->filters($request, $hotel)));
+        return $this->success($reports->dashboard($hotel, $this->filters($request, $hotel), $finance));
     }
 
     public function overview(Request $request, ReportService $reports, FinanceService $finance): JsonResponse
@@ -28,6 +28,18 @@ class ReportController extends ApiController
         $hotel = $request->attributes->get('currentHotel');
 
         return $this->success($reports->businessOverview($hotel, $this->filters($request, $hotel), $finance));
+    }
+
+    public function productMargins(Request $request, ReportService $reports): JsonResponse
+    {
+        $hotel = $request->attributes->get('currentHotel');
+        $filters = $this->filters($request, $hotel);
+        $extra = $request->validate([
+            'category' => ['nullable', 'string', 'max:255'],
+            'search' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        return $this->success($reports->productMargins($hotel, array_merge($filters, $extra)));
     }
 
     public function invoices(Request $request, ReportService $reports): JsonResponse

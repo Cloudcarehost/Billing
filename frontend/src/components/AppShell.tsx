@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { Bell, BookOpen, ChefHat, ClipboardList, LayoutDashboard, LogOut, Menu, MessageSquareWarning, Moon, Package, QrCode, Search, Settings, Store, Users, UtensilsCrossed, Wallet, Wifi, WifiOff, X } from 'lucide-react'
+import { Bell, BookOpen, ChefHat, ChevronDown, ClipboardList, LayoutDashboard, LogOut, Menu, MessageSquareWarning, Moon, Package, QrCode, Search, Settings, Store, TrendingUp, Users, UtensilsCrossed, Wallet, Wifi, WifiOff, X } from 'lucide-react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../features/auth/AuthContext'
 import { can, canAny, firstAccessiblePath, isOwner } from '../features/auth/permissions'
@@ -30,6 +30,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { session, logout, refresh, setSession, activeOutletId, setActiveOutletId } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const [reportsOpen, setReportsOpen] = useState(() => location.pathname.startsWith('/app/reports'))
   const [menuOpen, setMenuOpen] = useState(() => {
     if (typeof window === 'undefined') return true
     const stored = window.localStorage.getItem('dinesetu-nav-open')
@@ -182,7 +183,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (window.matchMedia('(max-width: 760px)').matches) setMenuOpen(false)
   }
   const links = <>
-    <nav className="main-nav">{navigation.filter(([, , , permissions]) => canAny(session, [...permissions])).map(([label, path, Icon]) => <NavLink key={path} to={path} end={path === '/app'} className="nav-link" onClick={closeDrawerIfMobile}><Icon size={17} />{label}{path === '/app/billing' && pendingBills > 0 ? <b className="nav-count">{pendingBills > 9 ? '9+' : pendingBills}</b> : null}</NavLink>)}</nav>
+    <nav className="main-nav">{navigation.filter(([, , , permissions]) => canAny(session, [...permissions])).map(([label, path, Icon]) => path === '/app/reports' ? <div className="nav-group" key={path}><button type="button" className={`nav-link nav-group-toggle${location.pathname.startsWith('/app/reports') ? ' active' : ''}`} aria-expanded={reportsOpen} aria-controls="reports-navigation" onClick={() => setReportsOpen((open) => !open)}><Icon size={17} /><span>{label}</span><ChevronDown className={reportsOpen ? 'expanded' : ''} size={15} /></button>{reportsOpen && <div id="reports-navigation" className="nav-submenu"><NavLink to="/app/reports" end className="nav-sub-link" onClick={closeDrawerIfMobile}><LayoutDashboard size={15} />Daily Report</NavLink><NavLink to="/app/reports/margins" className="nav-sub-link" onClick={closeDrawerIfMobile}><TrendingUp size={15} />Product Margin</NavLink></div>}</div> : <NavLink key={path} to={path} end={path === '/app'} className="nav-link" onClick={closeDrawerIfMobile}><Icon size={17} />{label}{path === '/app/billing' && pendingBills > 0 ? <b className="nav-count">{pendingBills > 9 ? '9+' : pendingBills}</b> : null}</NavLink>)}</nav>
     <div className="sidebar-bottom">
       {can(session, 'settings.manage') && <NavLink to="/app/settings/hotel" className="nav-link" onClick={closeDrawerIfMobile}><Settings size={17} />Hotel settings</NavLink>}
       {can(session, 'settings.manage') && <NavLink to="/app/settings/outlets" className="nav-link" onClick={closeDrawerIfMobile}><Store size={17} />Outlets</NavLink>}

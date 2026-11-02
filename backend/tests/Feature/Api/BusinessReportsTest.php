@@ -294,6 +294,93 @@ class BusinessReportsTest extends TestCase
         $waiter = $this->member($hotel, 'waiter', 'waiter-reports@example.test');
 
         $this->asUser($waiter)->getJson('/api/v1/reports/overview?from=2026-09-01&to=2026-09-07')->assertForbidden();
+        $this->asUser($waiter)->getJson('/api/v1/reports/product-margins?from=2026-09-01&to=2026-09-07')->assertForbidden();
+    }
+
+    public function test_product_margin_report_uses_invoice_snapshots_discounts_and_filters(): void
+    {
+        [$owner, $hotel] = $this->ownerContext();
+        $main = $hotel->outlets()->sole();
+        $bar = $hotel->outlets()->create(['name' => 'Bar', 'code' => 'BAR', 'invoice_prefix' => 'BAR']);
+        $issued = Invoice::query()->create([
+            'hotel_id' => $hotel->id,
+            'outlet_id' => $main->id,
+            'invoice_number' => 'MAIN-MARGIN-000001',
+            'status' => 'issued',
+            'payment_status' => 'paid',
+            'business_date' => '2026-09-01',
+            'subtotal' => 500,
+            'discount_amount' => 50,
+            'total_amount' => 450,
+            'paid_amount' => 450,
+            'balance_amount' => 0,
+        ]);
+        InvoiceItem::query()->create([
+            'invoice_id' => $issued->id,
+            'item_name' => 'Paneer tikka',
+            'category_name' => 'Starters',
+            'quantity' => 2,
+            'unit_price' => 200,
+            'unit_cost' => 80,
+            'line_subtotal' => 400,
+            'line_total' => 400,
+        ]);
+        InvoiceItem::query()->create([
+            'invoice_id' => $issued->id,
+            'item_name' => 'Water bottle',
+            'category_name' => 'Drinks',
+            'quantity' => 2,
+            'unit_price' => 50,
+            'unit_cost' => 0,
+            'line_subtotal' => 100,
+            'line_total' => 100,
+        ]);
+        $voided = Invoice::query()->create([
+            'hotel_id' => $hotel->id,
+            'outlet_id' => $main->id,
+            'invoice_number' => 'MAIN-MARGIN-000002',
+            'status' => 'voided',
+            'payment_status' => 'unpaid',
+            'business_date' => '2026-09-01',
+            'subtotal' => 999,
+            'total_amount' => 999,
+            'balance_amount' => 999,
+        ]);
+        $this->addLine($voided, 'Ignore me', 'Starters', 1, '999.00');
+        $barInvoice = Invoice::query()->create([
+            'hotel_id' => $hotel->id,
+            'outlet_id' => $bar->id,
+            'invoice_number' => 'BAR-MARGIN-000001',
+            'status' => 'issued',
+            'payment_status' => 'paid',
+            'business_date' => '2026-09-01',
+            'subtotal' => 100,
+            'total_amount' => 100,
+            'paid_amount' => 100,
+            'balance_amount' => 0,
+        ]);
+        $this->addLine($barInvoice, 'Beer', 'Drinks', 1, '100.00');
+
+        $report = $this->asUser($owner)->getJson('/api/v1/reports/product-margins?from=2026-09-01&to=2026-09-01&outlet_id='.$main->id)->assertOk();
+        $report->assertJsonPath('data.summary.quantity', 4)
+            ->assertJsonPath('data.summary.gross_sales', '500.00')
+            ->assertJsonPath('data.summary.discounts', '50.00')
+            ->assertJsonPath('data.summary.net_sales', '450.00')
+            ->assertJsonPath('data.summary.total_cost', '160.00')
+            ->assertJsonPath('data.summary.profit', '290.00')
+            ->assertJsonPath('data.summary.margin_percent', 64.4)
+            ->assertJsonPath('data.summary.missing_cost_items', 1)
+            ->assertJsonPath('data.items.0.item', 'Paneer tikka')
+            ->assertJsonPath('data.items.0.average_selling_price', '200.00')
+            ->assertJsonPath('data.items.0.average_cost_price', '80.00')
+            ->assertJsonPath('data.items.0.unit_margin', '120.00')
+            ->assertJsonPath('data.items.0.profit', '200.00');
+        $this->assertEqualsCanonicalizing(['Drinks', 'Starters'], $report->json('data.categories'));
+        $this->assertNotContains('Ignore me', collect($report->json('data.items'))->pluck('item')->all());
+        $this->assertNotContains('Beer', collect($report->json('data.items'))->pluck('item')->all());
+
+        $filtered = $this->asUser($owner)->getJson('/api/v1/reports/product-margins?from=2026-09-01&to=2026-09-01&outlet_id='.$main->id.'&category=Drinks&search=water')->assertOk();
+        $filtered->assertJsonCount(1, 'data.items')->assertJsonPath('data.items.0.item', 'Water bottle');
     }
 
     private function addLine(Invoice $invoice, string $name, string $category, float $quantity, string $total): void

@@ -17,6 +17,7 @@ const PreviousBillsPage = lazy(() => import('./pages/PreviousBillsPage').then((m
 const InventoryPage = lazy(() => import('./pages/PhaseThreePages').then((module) => ({ default: module.InventoryPage })))
 const LiveDashboardPage = lazy(() => import('./pages/PhaseThreePages').then((module) => ({ default: module.LiveDashboardPage })))
 const ReportsPage = lazy(() => import('./pages/ReportsPage').then((module) => ({ default: module.ReportsPage })))
+const ProductMarginsPage = lazy(() => import('./pages/ProductMarginsPage').then((module) => ({ default: module.ProductMarginsPage })))
 const MoneyPage = lazy(() => import('./pages/MoneyPage').then((module) => ({ default: module.MoneyPage })))
 const ComplaintsPage = lazy(() => import('./pages/ComplaintsPage').then((module) => ({ default: module.ComplaintsPage })))
 const AccountSecurityPage = lazy(() => import('./pages/SettingsPages').then((module) => ({ default: module.AccountSecurityPage })))
@@ -66,6 +67,7 @@ function ProtectedApp() {
     <Route path="menu" element={<LazyRoute><PermissionRoute permission="catalog.view"><MenuPage /></PermissionRoute></LazyRoute>} />
     <Route path="inventory" element={<LazyRoute><PermissionRoute permission="inventory.view"><InventoryPage /></PermissionRoute></LazyRoute>} />
     <Route path="reports" element={<LazyRoute><PermissionRoute permission="reports.view"><ReportsPage /></PermissionRoute></LazyRoute>} />
+    <Route path="reports/margins" element={<LazyRoute><PermissionRoute permission="reports.view"><ProductMarginsPage /></PermissionRoute></LazyRoute>} />
     <Route path="money" element={<LazyRoute><PermissionRoute permission="finance.view"><MoneyPage /></PermissionRoute></LazyRoute>} />
     <Route path="complaints" element={<LazyRoute><AnyPermissionRoute permissions={['complaints.view', 'complaints.create', 'complaints.manage']}><ComplaintsPage /></AnyPermissionRoute></LazyRoute>} />
     <Route path="customers" element={<PermissionRoute permission="customers.view"><PlaceholderPage title="Customers" description="Customer management will be added with billing." /></PermissionRoute>} />

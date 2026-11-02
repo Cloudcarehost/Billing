@@ -184,6 +184,9 @@ class FinanceAndOwnersTest extends TestCase
 
         $dashboard = $this->asUser($owner)->getJson('/api/v1/dashboard?from=2026-09-01&to=2026-09-07')->assertOk();
         $this->assertEquals((float) $summary->json('data.billed'), (float) $dashboard->json('data.sales.amount'));
+        $dashboard->assertJsonPath('data.daily_averages.days', 7)
+            ->assertJsonPath('data.daily_averages.earnings', '142.86')
+            ->assertJsonPath('data.daily_averages.expenses', '814.29');
 
         $this->assertSame('Plot rent', StandingCost::query()->find($rent['id'])?->name);
         $this->assertFalse((bool) $inactiveStaff['membership']['is_active']);

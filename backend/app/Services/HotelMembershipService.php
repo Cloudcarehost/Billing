@@ -39,6 +39,7 @@ class HotelMembershipService
             return $user->fresh();
         });
         $this->access->forgetUser($user->id);
+        ReportService::invalidateDashboard($hotel->id);
 
         return $user;
     }
@@ -68,6 +69,7 @@ class HotelMembershipService
             return $user->fresh();
         });
         $this->access->forgetUser($user->id);
+        ReportService::invalidateDashboard($hotel->id);
 
         return $user;
     }

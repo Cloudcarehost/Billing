@@ -9,9 +9,25 @@ use App\Models\LedgerEntry;
 use App\Models\StandingCost;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Collection;
 
 class FinanceService
 {
+    public function expenseTotal(Hotel $hotel, string $from, string $to): string
+    {
+        $ledgerMinor = Money::toMinor(LedgerEntry::query()
+            ->where('hotel_id', $hotel->id)
+            ->where('type', 'expense')
+            ->whereBetween('occurred_on', [$from, $to])
+            ->sum('amount'));
+        $standingMinor = array_sum(array_map(
+            fn (array $line) => Money::toMinor($line['amount']),
+            $this->standingLines($hotel, $from, $to)
+        ));
+
+        return Money::fromMinor($ledgerMinor + $standingMinor);
+    }
+
     /** @return array<string, mixed> */
     public function summary(Hotel $hotel, string $from, string $to): array
     {
@@ -198,7 +214,7 @@ class FinanceService
     }
 
     /**
-     * @param  \Illuminate\Support\Collection<int, LedgerEntry>  $entries
+     * @param  Collection<int, LedgerEntry>  $entries
      * @param  list<array{key: string, source: string, name: string, pay_cycle: string, rate: string, units: int, amount: string, detail: string, due_on: ?string, due_dates: list<string>}>  $standing
      * @return list<array<string, mixed>>
      */

@@ -107,6 +107,7 @@ Route::prefix('v1')->group(function (): void {
 
         Route::get('dashboard', [ReportController::class, 'dashboard'])->middleware('permission:dashboard.view');
         Route::get('reports/overview', [ReportController::class, 'overview'])->middleware('permission:reports.view');
+        Route::get('reports/product-margins', [ReportController::class, 'productMargins'])->middleware('permission:reports.view');
         Route::get('reports/invoices', [ReportController::class, 'invoices'])->middleware('permission:reports.view');
         Route::get('reports/payments', [ReportController::class, 'payments'])->middleware('permission:reports.view');
         Route::get('reports/exports', [ReportController::class, 'exports'])->middleware('permission:reports.export');
