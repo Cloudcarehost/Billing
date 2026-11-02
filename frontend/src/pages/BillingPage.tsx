@@ -306,7 +306,7 @@ export function BillingPage() {
             <h3>Not on customer bill</h3>
             <div className="bill-qty-head"><span>Item</span><span aria-hidden="true"></span><span>Qty</span><span>Price</span><span>Amt</span><span>Actions</span></div>
             {internalItems.map(renderBillLine)}
-            <div className="bill-line-subtotal"><span>Internal total</span><strong>{money(sectionTotal(internalItems), session?.hotel.currency_code)}</strong></div>
+            <div className="bill-line-subtotal"><span>Other total</span><strong>{money(sectionTotal(internalItems), session?.hotel.currency_code)}</strong></div>
           </div>}
         </div>
         {can(session, 'orders.create') && openForItems && <button type="button" className="button button-secondary" onClick={() => navigate(`/app/orders?table=${selectedSession.dining_table_id}&from=billing&session=${selectedSession.id}`)}><Plus size={15} />Include items</button>}

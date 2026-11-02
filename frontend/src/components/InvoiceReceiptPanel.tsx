@@ -154,14 +154,9 @@ export function InvoiceReceiptPanel({
         {customerItems.length > 0 && <div className="bill-qty-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amt</span></div>}
         {customerItems.map(renderBillLine)}
         {customerItems.length > 0 && <div className="bill-line-subtotal"><span>Items total</span><strong>{money(sectionTotal(customerItems), currency)}</strong></div>}
+        {internalItems.length > 0 && <div className="bill-line-subtotal bill-other-total"><span>Other total</span><strong>{money(sectionTotal(internalItems), currency)}</strong></div>}
         {!customerItems.length && !internalItems.length && <p className="bill-empty-lines">No items on this bill yet.</p>}
       </div>
-      {internalItems.length > 0 && <div className="bill-line-section internal-bill-section">
-        <h3>Not on customer bill</h3>
-        <div className="bill-qty-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amt</span></div>
-        {internalItems.map(renderBillLine)}
-        <div className="bill-line-subtotal"><span>Internal total</span><strong>{money(sectionTotal(internalItems), currency)}</strong></div>
-      </div>}
     </div>
     {invoice.status !== 'voided' && can(session, 'billing.create') && <div className="discount-row guest-details"><label className="field"><span>Guest name (optional)</span><input value={guest.customer_name} onChange={(event) => setGuest((currentGuest) => ({ ...currentGuest, customer_name: event.target.value }))} placeholder="Not required to bill" /></label><label className="field"><span>Phone (optional)</span><input value={guest.customer_phone} onChange={(event) => setGuest((currentGuest) => ({ ...currentGuest, customer_phone: event.target.value }))} /></label><label className="field"><span>Email (optional)</span><input type="email" value={guest.customer_email} onChange={(event) => setGuest((currentGuest) => ({ ...currentGuest, customer_email: event.target.value }))} /></label><label className="field"><span>GSTIN (optional)</span><input value={guest.customer_gstin} onChange={(event) => setGuest((currentGuest) => ({ ...currentGuest, customer_gstin: event.target.value }))} /></label><button type="button" className="button button-secondary" disabled={busy} onClick={() => void saveGuest()}>Save guest details</button></div>}
     <div className="invoice-total"><span>Total</span><strong>{money(invoice.total_amount, currency)}</strong>{value(invoice.discount_amount) > 0 ? <span>Discount {money(invoice.discount_amount, currency)}</span> : null}<span>Paid {money(invoice.paid_amount, currency)} · Balance {money(invoice.balance_amount, currency)}</span>{invoice.charged_to?.name ? <span>On account: {invoice.charged_to.name}</span> : null}</div>

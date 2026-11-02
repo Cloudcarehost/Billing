@@ -75,7 +75,7 @@ export function printThermalReceipt(input: ThermalReceiptInput) {
 export function thermalReceiptHtml(input: ThermalReceiptInput) {
   const { hotel, outlet, tableName, invoice, duplicate, serviceLabel = 'Dine In' } = input
   const printable = input.items.filter(printsOnCustomerBill)
-  const omitted = printable.length !== input.items.length
+  const internal = input.items.filter((item) => !printsOnCustomerBill(item))
   const lines = aggregateReceiptItems(printable)
   const totalQty = lines.reduce((sum, line) => sum + line.qty, 0)
   const billed = invoice.billed_at ? new Date(invoice.billed_at) : new Date()
@@ -83,15 +83,10 @@ export function thermalReceiptHtml(input: ThermalReceiptInput) {
   const time = billed.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: hotel.timezone || 'Asia/Kolkata' })
   const city = (hotel.address ?? outlet?.address ?? '').split(',').map((part) => part.trim()).filter(Boolean).at(-1) ?? ''
   const place = outlet?.name && outlet.name !== hotel.name ? outlet.name : city
-  const printedSubtotal = printable.reduce((sum, item) => sum + Number(item.line_subtotal ?? item.line_total), 0)
-  const printedTax = printable.reduce((sum, item) => sum + Number(item.tax_amount ?? 0), 0)
   const printedLinesTotal = printable.reduce((sum, item) => sum + Number(item.line_total), 0)
-  const allLinesTotal = input.items.reduce((sum, item) => sum + Number(item.line_total), 0)
+  const otherTotal = internal.reduce((sum, item) => sum + Number(item.line_total), 0)
   const invoiceDiscount = Number(invoice.discount_amount ?? 0)
-  const tax = omitted ? printedTax : Number(invoice.tax_amount ?? 0)
-  const discount = omitted && allLinesTotal > 0 ? invoiceDiscount * (printedLinesTotal / allLinesTotal) : invoiceDiscount
-  const subtotal = omitted ? printedSubtotal : Number(invoice.subtotal ?? invoice.total_amount)
-  const grand = omitted ? printedLinesTotal - discount : Number(invoice.total_amount)
+  const grand = Number(invoice.total_amount)
   const itemRows = lines.map((line) => `<div class="line"><span>${escapeHtml(line.name)}</span><span>${qtyLabel(line.qty)}</span><span>${moneyPlain(line.price)}</span><span>${moneyPlain(line.amount)}</span></div>`).join('')
 
   return `<!doctype html><html><head><title>${escapeHtml(invoice.invoice_number)}</title>
@@ -140,9 +135,9 @@ html, body {
   <div class="head"><span>Item</span><span>Qty</span><span>Price</span><span>Amount</span></div>
   ${itemRows}
   <hr class="rule" />
-  <div class="totals"><span>Total Qty: ${qtyLabel(totalQty)}</span><span>Sub Total ${moneyPlain(subtotal)}</span></div>
-  ${tax > 0 ? `<div class="totals"><span></span><span>Tax ${moneyPlain(tax)}</span></div>` : ''}
-  ${discount > 0 ? `<div class="totals"><span></span><span>Discount ${moneyPlain(discount)}</span></div>` : ''}
+  <div class="totals"><span>Total Qty: ${qtyLabel(totalQty)}</span><span>Items total ${moneyPlain(printedLinesTotal)}</span></div>
+  ${otherTotal > 0 ? `<div class="totals"><span></span><span>Other total ${moneyPlain(otherTotal)}</span></div>` : ''}
+  ${invoiceDiscount > 0 ? `<div class="totals"><span></span><span>Discount ${moneyPlain(invoiceDiscount)}</span></div>` : ''}
   <p class="grand">Grand Total ₹ ${moneyPlain(grand)}</p>
   <p class="thanks">Thank You!!! Visit Again.</p>
   <p class="feed"><br><br><br><br>****</p>
