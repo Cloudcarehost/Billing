@@ -6,6 +6,7 @@ use App\Models\Hotel;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\Payment;
+use App\Models\Product;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\HotelMembershipService;
@@ -22,7 +23,6 @@ class BusinessReportsTest extends TestCase
         [$owner, $hotel] = $this->ownerContext();
         $main = $hotel->outlets()->sole();
         $bar = $hotel->outlets()->create(['name' => 'Bar', 'code' => 'BAR', 'invoice_prefix' => 'BAR']);
-
         Invoice::query()->create([
             'hotel_id' => $hotel->id,
             'outlet_id' => $main->id,
@@ -302,6 +302,12 @@ class BusinessReportsTest extends TestCase
         [$owner, $hotel] = $this->ownerContext();
         $main = $hotel->outlets()->sole();
         $bar = $hotel->outlets()->create(['name' => 'Bar', 'code' => 'BAR', 'invoice_prefix' => 'BAR']);
+        $water = Product::query()->create([
+            'hotel_id' => $hotel->id,
+            'name' => 'Water bottle',
+            'selling_price' => 50,
+            'cost_price' => 30,
+        ]);
         $issued = Invoice::query()->create([
             'hotel_id' => $hotel->id,
             'outlet_id' => $main->id,
@@ -327,6 +333,7 @@ class BusinessReportsTest extends TestCase
         ]);
         InvoiceItem::query()->create([
             'invoice_id' => $issued->id,
+            'product_id' => $water->id,
             'item_name' => 'Water bottle',
             'category_name' => 'Drinks',
             'quantity' => 2,
@@ -366,10 +373,11 @@ class BusinessReportsTest extends TestCase
             ->assertJsonPath('data.summary.gross_sales', '500.00')
             ->assertJsonPath('data.summary.discounts', '50.00')
             ->assertJsonPath('data.summary.net_sales', '450.00')
-            ->assertJsonPath('data.summary.total_cost', '160.00')
-            ->assertJsonPath('data.summary.profit', '290.00')
-            ->assertJsonPath('data.summary.margin_percent', 64.4)
-            ->assertJsonPath('data.summary.missing_cost_items', 1)
+            ->assertJsonPath('data.summary.total_cost', '220.00')
+            ->assertJsonPath('data.summary.profit', '230.00')
+            ->assertJsonPath('data.summary.margin_percent', 51.1)
+            ->assertJsonPath('data.summary.missing_cost_items', 0)
+            ->assertJsonPath('data.summary.current_cost_items', 1)
             ->assertJsonPath('data.items.0.item', 'Paneer tikka')
             ->assertJsonPath('data.items.0.average_selling_price', '200.00')
             ->assertJsonPath('data.items.0.average_cost_price', '80.00')
@@ -380,7 +388,11 @@ class BusinessReportsTest extends TestCase
         $this->assertNotContains('Beer', collect($report->json('data.items'))->pluck('item')->all());
 
         $filtered = $this->asUser($owner)->getJson('/api/v1/reports/product-margins?from=2026-09-01&to=2026-09-01&outlet_id='.$main->id.'&category=Drinks&search=water')->assertOk();
-        $filtered->assertJsonCount(1, 'data.items')->assertJsonPath('data.items.0.item', 'Water bottle');
+        $filtered->assertJsonCount(1, 'data.items')
+            ->assertJsonPath('data.items.0.item', 'Water bottle')
+            ->assertJsonPath('data.items.0.average_cost_price', '30.00')
+            ->assertJsonPath('data.items.0.uses_current_cost', true)
+            ->assertJsonPath('data.items.0.missing_cost', false);
     }
 
     private function addLine(Invoice $invoice, string $name, string $category, float $quantity, string $total): void

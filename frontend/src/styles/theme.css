@@ -10,6 +10,7 @@
 }
 
 .dashboard-metrics.dashboard-kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.cost-fallback { color: var(--color-blue); }
 @media (max-width: 1180px) { .dashboard-metrics.dashboard-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .dashboard-metrics.dashboard-kpis { grid-template-columns: 1fr; } }
 * { box-sizing: border-box; }

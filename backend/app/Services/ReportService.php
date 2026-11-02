@@ -185,7 +185,9 @@ class ReportService
             ->selectRaw('SUM(invoice_items.quantity) as quantity')
             ->selectRaw('SUM(invoice_items.unit_price * invoice_items.quantity) as selling_value')
             ->selectRaw('SUM(invoice_items.line_subtotal) as gross_sales')
-            ->selectRaw('SUM(invoice_items.unit_cost * invoice_items.quantity) as total_cost')
+            ->selectRaw('SUM((CASE WHEN invoice_items.unit_cost > 0 THEN invoice_items.unit_cost ELSE COALESCE(products.cost_price, 0) END) * invoice_items.quantity) as total_cost')
+            ->selectRaw('SUM(CASE WHEN invoice_items.unit_cost <= 0 AND COALESCE(products.cost_price, 0) > 0 THEN invoice_items.quantity ELSE 0 END) as current_cost_quantity')
+            ->selectRaw('SUM(CASE WHEN invoice_items.unit_cost <= 0 AND COALESCE(products.cost_price, 0) <= 0 THEN invoice_items.quantity ELSE 0 END) as missing_cost_quantity')
             ->selectRaw('SUM(CASE WHEN invoices.subtotal > 0 THEN (invoice_items.line_subtotal * invoices.discount_amount / invoices.subtotal) ELSE 0 END) as allocated_discount')
             ->groupBy('invoice_items.product_id', 'invoice_items.item_name', 'invoice_items.category_name', 'categories.name')
             ->get();
@@ -198,6 +200,7 @@ class ReportService
             'total_cost' => 0,
             'profit' => 0,
             'missing_cost_items' => 0,
+            'current_cost_items' => 0,
             'low_margin_items' => 0,
         ];
         $items = [];
@@ -214,7 +217,8 @@ class ReportService
             $averageCostMinor = $quantity > 0 ? (int) round($costMinor / $quantity, 0, PHP_ROUND_HALF_UP) : 0;
             $unitMarginMinor = $averageSellingMinor - $averageCostMinor;
             $marginPercent = $netMinor !== 0 ? round($profitMinor / $netMinor * 100, 1) : null;
-            $missingCost = $costMinor === 0;
+            $missingCost = (float) $row->missing_cost_quantity > 0;
+            $usesCurrentCost = (float) $row->current_cost_quantity > 0;
 
             $items[] = [
                 'product_id' => $row->product_id ? (int) $row->product_id : null,
@@ -231,6 +235,7 @@ class ReportService
                 'profit' => Money::fromMinor($profitMinor),
                 'margin_percent' => $marginPercent,
                 'missing_cost' => $missingCost,
+                'uses_current_cost' => $usesCurrentCost,
             ];
 
             $summary['quantity'] += $quantity;
@@ -241,6 +246,9 @@ class ReportService
             $summary['profit'] += $profitMinor;
             if ($missingCost) {
                 $summary['missing_cost_items']++;
+            }
+            if ($usesCurrentCost) {
+                $summary['current_cost_items']++;
             }
             if ($profitMinor <= 0) {
                 $summary['low_margin_items']++;
@@ -263,6 +271,7 @@ class ReportService
                 'profit' => Money::fromMinor($summary['profit']),
                 'margin_percent' => $summary['net_sales'] !== 0 ? round($summary['profit'] / $summary['net_sales'] * 100, 1) : null,
                 'missing_cost_items' => $summary['missing_cost_items'],
+                'current_cost_items' => $summary['current_cost_items'],
                 'low_margin_items' => $summary['low_margin_items'],
             ],
             'items' => $items,

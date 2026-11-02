@@ -30,6 +30,7 @@ type MarginItem = {
   profit: string
   margin_percent: number | null
   missing_cost: boolean
+  uses_current_cost: boolean
 }
 type MarginReport = {
   period: { from: string; to: string }
@@ -44,6 +45,7 @@ type MarginReport = {
     profit: string
     margin_percent: number | null
     missing_cost_items: number
+    current_cost_items: number
     low_margin_items: number
   }
   items: MarginItem[]
@@ -160,7 +162,7 @@ export function ProductMarginsPage() {
       <section className="data-card margin-table-card">
         <div className="data-card-heading"><TrendingUp size={19} /><div><h2>Item profitability</h2><small>Tax excluded · discounts allocated proportionally</small></div><div className="margin-sort"><label><span>Sort by</span><select value={sortBy} onChange={(event) => setSortBy(event.target.value as SortKey)}><option value="profit">Total profit</option><option value="margin_percent">Margin %</option><option value="unit_margin">Unit margin</option><option value="quantity">Quantity sold</option><option value="net_sales">Net sales</option></select></label><button type="button" className="button button-secondary" title={sortDescending ? 'Sort ascending' : 'Sort descending'} aria-label={sortDescending ? 'Sort ascending' : 'Sort descending'} onClick={() => setSortDescending((current) => !current)}><ArrowDownUp size={14} />{sortDescending ? 'High to low' : 'Low to high'}</button></div></div>
         <div className="data-table"><table className="report-table margin-report-table"><thead><tr><th>Item</th><th>Category</th><th>Avg selling</th><th>Avg cost</th><th>Unit margin</th><th>Qty sold</th><th>Net sales</th><th>Total cost</th><th>Profit</th><th>Margin</th></tr></thead><tbody>
-          {rows.map((row) => <tr key={`${row.product_id ?? 'snapshot'}-${row.item}-${row.category}`} className={Number(row.profit) < 0 ? 'margin-negative-row' : ''}><td><strong>{row.item}</strong>{row.missing_cost && <small className="cost-warning"><AlertTriangle size={12} />Cost missing</small>}</td><td>{row.category}</td><td>{money(row.average_selling_price, currency)}</td><td>{money(row.average_cost_price, currency)}</td><td className={Number(row.unit_margin) < 0 ? 'negative' : 'positive'}>{money(row.unit_margin, currency)}</td><td>{qty(row.quantity)}</td><td>{money(row.net_sales, currency)}</td><td>{money(row.total_cost, currency)}</td><td className={Number(row.profit) < 0 ? 'negative' : 'positive'}>{money(row.profit, currency)}</td><td className={Number(row.margin_percent ?? 0) < 0 ? 'negative' : ''}>{row.margin_percent == null ? '—' : `${row.margin_percent}%`}</td></tr>)}
+          {rows.map((row) => <tr key={`${row.product_id ?? 'snapshot'}-${row.item}-${row.category}`} className={Number(row.profit) < 0 ? 'margin-negative-row' : ''}><td><strong>{row.item}</strong>{row.missing_cost ? <small className="cost-warning"><AlertTriangle size={12} />Cost missing</small> : row.uses_current_cost ? <small className="cost-fallback">Using current product cost</small> : null}</td><td>{row.category}</td><td>{money(row.average_selling_price, currency)}</td><td>{money(row.average_cost_price, currency)}</td><td className={Number(row.unit_margin) < 0 ? 'negative' : 'positive'}>{money(row.unit_margin, currency)}</td><td>{qty(row.quantity)}</td><td>{money(row.net_sales, currency)}</td><td>{money(row.total_cost, currency)}</td><td className={Number(row.profit) < 0 ? 'negative' : 'positive'}>{money(row.profit, currency)}</td><td className={Number(row.margin_percent ?? 0) < 0 ? 'negative' : ''}>{row.margin_percent == null ? '—' : `${row.margin_percent}%`}</td></tr>)}
           {!rows.length && <tr><td colSpan={10} className="empty-row">No issued item sales match these filters.</td></tr>}
         </tbody></table></div>
       </section>
