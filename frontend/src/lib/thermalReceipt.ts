@@ -90,7 +90,7 @@ export function thermalReceiptHtml(input: ThermalReceiptInput) {
   const itemRows = lines.map((line) => `<div class="line"><span>${escapeHtml(line.name)}</span><span>${qtyLabel(line.qty)}</span><span>${moneyPlain(line.price)}</span><span>${moneyPlain(line.amount)}</span></div>`).join('')
 
   return `<!doctype html><html><head><title>${escapeHtml(invoice.invoice_number)}</title>
-<meta name="viewport" content="width=80mm" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
 @page { size: 80mm auto; margin: 0; }
 * { box-sizing: border-box; }
@@ -104,22 +104,23 @@ html, body {
 @media print {
   @page { size: 80mm auto; margin: 0; }
   html, body { width: 80mm !important; max-width: 80mm !important; min-width: 80mm !important; margin: 0 !important; color: #000 !important; }
+  .receipt { width: 80mm !important; }
 }
-.receipt { width: 80mm; padding: 2mm 3mm 0; font-size: 15px; line-height: 1.35; font-weight: 700; }
+.receipt { width: 80mm; padding: 2mm 3mm 0; font-size: 9pt; line-height: 1.28; font-weight: 700; }
 .center { text-align: center; }
-.hotel { margin: 6px 0 4px; font-size: 20px; font-weight: 900; }
-.muted { font-size: 14px; font-weight: 700; }
-.meta { display: flex; justify-content: space-between; gap: 6px; margin: 3px 0; font-weight: 700; }
-.rule { margin: 8px 0; border: 0; border-top: 2px dashed #000; }
-.head, .line { display: grid; grid-template-columns: minmax(0, 1.4fr) 32px 58px 64px; gap: 4px; font-weight: 700; }
-.head { font-size: 14px; font-weight: 900; }
-.line { font-size: 15px; }
+.hotel { margin: 1.5mm 0 1mm; font-size: 11.25pt; font-weight: 900; }
+.muted { font-size: 8.25pt; font-weight: 700; }
+.meta { display: flex; justify-content: space-between; gap: 1.5mm; margin: .75mm 0; font-weight: 700; }
+.rule { margin: 2mm 0; border: 0; border-top: .4mm dashed #000; }
+.head, .line { display: grid; grid-template-columns: minmax(0, 1.4fr) 7mm 13mm 15mm; gap: 1mm; font-weight: 700; }
+.head { font-size: 8.25pt; font-weight: 900; }
+.line { font-size: 9pt; }
 .line span:first-child { overflow-wrap: anywhere; }
 .line span:nth-child(n+2), .head span:nth-child(n+2) { text-align: right; }
-.totals { display: flex; justify-content: space-between; gap: 8px; font-size: 15px; font-weight: 800; }
-.grand { margin: 10px 0 0; text-align: center; font-size: 20px; font-weight: 900; }
-.thanks { margin: 12px 0 0; text-align: center; font-size: 16px; font-weight: 900; }
-.feed { margin: 0; padding: 22px 0 10px; text-align: center; font-size: 18px; font-weight: 900; letter-spacing: 3px; }
+.totals { display: flex; justify-content: space-between; gap: 2mm; font-size: 9pt; font-weight: 800; }
+.grand { margin: 2.5mm 0 0; text-align: center; font-size: 12pt; font-weight: 900; }
+.thanks { margin: 3mm 0 0; text-align: center; font-size: 10pt; font-weight: 900; }
+.feed { margin: 0; padding: 5.5mm 0 2.5mm; text-align: center; font-size: 11pt; font-weight: 900; letter-spacing: .75mm; }
 </style></head><body>
 <main class="receipt">
   ${duplicate ? '<p class="center muted">Duplicate</p>' : '<p class="center muted">Original</p>'}

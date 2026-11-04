@@ -138,7 +138,7 @@ export function InvoiceReceiptPanel({
   }
 
   const renderBillLine = (group: (typeof customerItems)[number]) => (
-    <div className="invoice-line bill-qty-line" key={group.key}>
+    <div className="invoice-line bill-qty-line staff-invoice-line" key={group.key}>
       <span>{group.item_name}</span>
       <b>{qtyLabel(group.quantity)}</b>
       <span>{money(group.unit_price, currency)}</span>
@@ -151,9 +151,14 @@ export function InvoiceReceiptPanel({
     <div className="invoice-lines">
       <div className="bill-line-section">
         {internalItems.length > 0 && customerItems.length > 0 && <h3>Customer bill</h3>}
-        {customerItems.length > 0 && <div className="bill-qty-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amt</span></div>}
+        {customerItems.length > 0 && <div className="bill-qty-head staff-invoice-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amt</span></div>}
         {customerItems.map(renderBillLine)}
         {customerItems.length > 0 && <div className="bill-line-subtotal"><span>Items total</span><strong>{money(sectionTotal(customerItems), currency)}</strong></div>}
+        {internalItems.length > 0 && <div className="internal-only-bill-details internal-bill-section">
+          <h3>Internal items · not printed</h3>
+          <div className="bill-qty-head staff-invoice-head"><span>Item</span><span>Qty</span><span>Price</span><span>Amt</span></div>
+          {internalItems.map(renderBillLine)}
+        </div>}
         {internalItems.length > 0 && <div className="bill-line-subtotal bill-other-total"><span>Other total</span><strong>{money(sectionTotal(internalItems), currency)}</strong></div>}
         {!customerItems.length && !internalItems.length && <p className="bill-empty-lines">No items on this bill yet.</p>}
       </div>
