@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class LedgerEntry extends Model
 {
-    protected $fillable = ['hotel_id', 'created_by', 'type', 'category', 'amount', 'comment', 'occurred_on'];
+    protected $fillable = ['hotel_id', 'outlet_id', 'created_by', 'type', 'category', 'amount', 'comment', 'occurred_on'];
 
     protected function casts(): array
     {
@@ -20,6 +20,11 @@ class LedgerEntry extends Model
     public function hotel(): BelongsTo
     {
         return $this->belongsTo(Hotel::class);
+    }
+
+    public function outlet(): BelongsTo
+    {
+        return $this->belongsTo(Outlet::class);
     }
 
     public function creator(): BelongsTo

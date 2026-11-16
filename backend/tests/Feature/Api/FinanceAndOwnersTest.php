@@ -4,6 +4,8 @@ namespace Tests\Feature\Api;
 
 use App\Models\Hotel;
 use App\Models\Invoice;
+use App\Models\Outlet;
+use App\Models\Payment;
 use App\Models\Role;
 use App\Models\StandingCost;
 use App\Models\User;
@@ -16,6 +18,107 @@ use Tests\TestCase;
 class FinanceAndOwnersTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_daily_cash_register_reconciles_outlet_sales_refunds_expenses_and_income(): void
+    {
+        $this->travelTo('2026-11-16 12:00:00');
+        [$owner, $hotel] = $this->ownerContext();
+        $outlet = $hotel->outlets()->sole();
+        $otherOutlet = Outlet::query()->create([
+            'hotel_id' => $hotel->id,
+            'name' => 'Rooftop',
+            'code' => 'ROOF',
+            'invoice_prefix' => 'ROOF',
+            'is_active' => true,
+        ]);
+
+        $invoice = Invoice::query()->create([
+            'hotel_id' => $hotel->id,
+            'outlet_id' => $outlet->id,
+            'invoice_number' => 'MAIN-REGISTER-000001',
+            'status' => 'issued',
+            'payment_status' => 'paid',
+            'business_date' => '2026-11-16',
+            'subtotal' => 1100,
+            'discount_amount' => 100,
+            'total_amount' => 1000,
+            'paid_amount' => 1000,
+            'balance_amount' => 0,
+        ]);
+        Payment::query()->create([
+            'invoice_id' => $invoice->id,
+            'received_by' => $owner->id,
+            'type' => 'refund',
+            'method' => 'cash',
+            'amount' => -100,
+            'paid_at' => '2026-11-16 10:00:00',
+        ]);
+        Invoice::query()->create([
+            'hotel_id' => $hotel->id,
+            'outlet_id' => $outlet->id,
+            'invoice_number' => 'MAIN-PENDING-000002',
+            'status' => 'draft',
+            'payment_status' => 'unpaid',
+            'business_date' => '2026-11-16',
+            'subtotal' => 500,
+            'total_amount' => 500,
+            'balance_amount' => 500,
+        ]);
+        Invoice::query()->create([
+            'hotel_id' => $hotel->id,
+            'outlet_id' => $otherOutlet->id,
+            'invoice_number' => 'ROOF-REGISTER-000001',
+            'status' => 'issued',
+            'payment_status' => 'paid',
+            'business_date' => '2026-11-16',
+            'subtotal' => 700,
+            'total_amount' => 700,
+            'paid_amount' => 700,
+            'balance_amount' => 0,
+        ]);
+
+        $this->asUser($owner)->withHeader('X-Outlet-Id', (string) $outlet->id)
+            ->postJson('/api/v1/finance/entries', [
+                'type' => 'expense', 'category' => 'Groceries', 'amount' => 200, 'occurred_on' => '2026-11-16',
+            ])->assertCreated();
+        $this->postJson('/api/v1/finance/entries', [
+            'type' => 'income', 'category' => 'Other', 'amount' => 50, 'occurred_on' => '2026-11-16',
+        ])->assertCreated();
+        $this->postJson('/api/v1/finance/daily-register', [
+            'business_date' => '2026-11-15', 'actual_online' => 600, 'actual_cash' => 400,
+        ])->assertCreated();
+        $current = $this->postJson('/api/v1/finance/daily-register', [
+            'business_date' => '2026-11-16', 'actual_online' => 1000, 'actual_cash' => 750,
+            'notes' => 'Counted at closing',
+        ])->assertCreated();
+
+        $overview = $this->getJson('/api/v1/finance/daily-register?from=2026-11-15&to=2026-11-16')->assertOk();
+        $overview->assertJsonPath('data.summary.net_sales', '900.00')
+            ->assertJsonPath('data.summary.expenses', '200.00')
+            ->assertJsonPath('data.summary.other_income', '50.00')
+            ->assertJsonPath('data.summary.actual_online', '1000.00')
+            ->assertJsonPath('data.summary.actual_cash', '750.00')
+            ->assertJsonPath('data.rows.0.business_date', '2026-11-16')
+            ->assertJsonPath('data.rows.0.yesterday_total', '1000.00')
+            ->assertJsonPath('data.rows.0.net_sales', '900.00')
+            ->assertJsonPath('data.rows.0.expected_total', '1750.00')
+            ->assertJsonPath('data.rows.0.actual_total', '1750.00')
+            ->assertJsonPath('data.rows.0.difference', '0.00')
+            ->assertJsonPath('data.rows.0.status', 'matched');
+
+        $this->putJson('/api/v1/finance/daily-register/'.$current->json('data.id'), [
+            'actual_online' => 950,
+            'actual_cash' => 750,
+        ])->assertOk();
+        $this->getJson('/api/v1/finance/daily-register?from=2026-11-16&to=2026-11-16')
+            ->assertOk()
+            ->assertJsonPath('data.rows.0.status', 'short')
+            ->assertJsonPath('data.rows.0.difference', '-50.00');
+
+        $this->postJson('/api/v1/finance/daily-register', [
+            'business_date' => '2026-11-16', 'actual_online' => 1, 'actual_cash' => 1,
+        ])->assertUnprocessable();
+    }
 
     public function test_a_second_owner_can_be_assigned_and_the_last_owner_cannot_be_removed(): void
     {

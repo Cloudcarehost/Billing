@@ -12,6 +12,30 @@ export type LedgerEntry = { id: number | string; type: 'expense' | 'income'; cat
 export type StandingCost = { id: number; name: string; amount: string; pay_cycle: PayCycle; due_on?: string | null; is_active: boolean }
 export type StandingLine = { key: string; source: 'staff' | 'standing'; name: string; pay_cycle: string; rate: string; units: number; amount: string; detail: string; due_on?: string | null; due_dates?: string[] }
 export type FinanceSummary = { period: { from: string; to: string }; billed: string; other_income: string; standing_total: string; extra_expenses: string; expenses: string; remaining: string; standing: StandingLine[]; entries: LedgerEntry[] }
+export type DailyMoneyRegisterRow = {
+  business_date: string
+  yesterday_total: string
+  net_sales: string
+  expenses: string
+  other_income: string
+  expected_total: string
+  register_id: number | null
+  actual_online: string | null
+  actual_cash: string | null
+  actual_total: string | null
+  difference: string | null
+  status: 'not_entered' | 'matched' | 'short' | 'over'
+  notes?: string | null
+  created_by?: { id: number; name: string } | null
+  updated_by?: { id: number; name: string } | null
+}
+export type DailyMoneyRegisterOverview = {
+  period: { from: string; to: string }
+  outlet_id: number
+  summary: { net_sales: string; expenses: string; other_income: string; actual_online: string; actual_cash: string }
+  calculation: DailyMoneyRegisterRow | null
+  rows: DailyMoneyRegisterRow[]
+}
 export type ComplaintStatus = 'open' | 'under_review' | 'resolved' | 'dismissed'
 export type ComplaintOptions = { statuses: string[]; reasons: string[]; responsibility_areas: string[]; outcomes: string[]; resolution_types: string[]; user_attributions: string[] }
 export type ComplaintSourceItem = { id: number; product_id?: number | null; item_name: string; quantity: string; status: string; service_route?: string | null; served_at?: string | null; tracked_done_at?: string | null; delivery_evidence: 'served' | 'billed' | 'staff_confirmation_required' }

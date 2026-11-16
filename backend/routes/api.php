@@ -129,6 +129,9 @@ Route::prefix('v1')->group(function (): void {
 
         Route::get('finance/summary', [FinanceController::class, 'summary'])->middleware('permission:finance.view');
         Route::get('finance/entries', [FinanceController::class, 'entries'])->middleware('permission:finance.view');
+        Route::get('finance/daily-register', [FinanceController::class, 'dailyRegister'])->middleware('permission:finance.view');
+        Route::post('finance/daily-register', [FinanceController::class, 'storeDailyRegister'])->middleware('permission:finance.manage');
+        Route::match(['put', 'patch'], 'finance/daily-register/{register}', [FinanceController::class, 'updateDailyRegister'])->middleware('permission:finance.manage');
         Route::post('finance/entries', [FinanceController::class, 'storeEntry'])->middleware('permission:finance.manage');
         Route::match(['put', 'patch'], 'finance/entries/{entry}', [FinanceController::class, 'updateEntry'])->middleware('permission:finance.manage');
         Route::delete('finance/entries/{entry}', [FinanceController::class, 'destroyEntry'])->middleware('permission:finance.manage');

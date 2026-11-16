@@ -2,15 +2,20 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Models\DailyMoneyRegister;
 use App\Models\Hotel;
 use App\Models\LedgerEntry;
+use App\Models\Outlet;
 use App\Models\StandingCost;
+use App\Services\AuditService;
+use App\Services\DailyMoneyRegisterService;
 use App\Services\FinanceService;
 use App\Services\ReportService;
 use App\Support\HotelDate;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class FinanceController extends ApiController
 {
@@ -18,7 +23,9 @@ class FinanceController extends ApiController
     {
         $hotel = $request->attributes->get('currentHotel');
 
-        return $this->success($finance->summary($hotel, ...array_values($this->range($request, $hotel))));
+        [$from, $to] = array_values($this->range($request, $hotel));
+
+        return $this->success($finance->summary($hotel, $from, $to, $request->attributes->get('currentOutletId')));
     }
 
     public function entries(Request $request): JsonResponse
@@ -29,6 +36,7 @@ class FinanceController extends ApiController
         return $this->success(
             LedgerEntry::query()
                 ->where('hotel_id', $hotel->id)
+                ->when($request->attributes->get('currentOutletId'), fn ($query, $id) => $query->where('outlet_id', $id))
                 ->whereBetween('occurred_on', [$from, $to])
                 ->with('creator:id,name')
                 ->orderByDesc('occurred_on')
@@ -43,6 +51,7 @@ class FinanceController extends ApiController
         $entry = LedgerEntry::query()->create([
             ...$this->entryData($request),
             'hotel_id' => $hotel->id,
+            'outlet_id' => $this->outletId($request),
             'created_by' => $request->user()->id,
         ]);
         ReportService::invalidateDashboard($hotel->id);
@@ -53,7 +62,10 @@ class FinanceController extends ApiController
     public function updateEntry(Request $request, int $entry): JsonResponse
     {
         $hotel = $request->attributes->get('currentHotel');
-        $entry = LedgerEntry::query()->where('hotel_id', $hotel->id)->findOrFail($entry);
+        $entry = LedgerEntry::query()
+            ->where('hotel_id', $hotel->id)
+            ->when($request->attributes->get('currentOutletId'), fn ($query, $id) => $query->where('outlet_id', $id))
+            ->findOrFail($entry);
         $entry->update($this->entryData($request, $entry));
         ReportService::invalidateDashboard($hotel->id);
 
@@ -63,7 +75,10 @@ class FinanceController extends ApiController
     public function destroyEntry(Request $request, int $entry): JsonResponse
     {
         $hotel = $request->attributes->get('currentHotel');
-        $entry = LedgerEntry::query()->where('hotel_id', $hotel->id)->findOrFail($entry);
+        $entry = LedgerEntry::query()
+            ->where('hotel_id', $hotel->id)
+            ->when($request->attributes->get('currentOutletId'), fn ($query, $id) => $query->where('outlet_id', $id))
+            ->findOrFail($entry);
         $entry->delete();
         ReportService::invalidateDashboard($hotel->id);
 
@@ -97,6 +112,63 @@ class FinanceController extends ApiController
         ReportService::invalidateDashboard($hotel->id);
 
         return $this->success($cost->fresh(), 'Fixed bill updated.');
+    }
+
+    public function dailyRegister(Request $request, DailyMoneyRegisterService $registers): JsonResponse
+    {
+        $hotel = $request->attributes->get('currentHotel');
+        [$from, $to] = array_values($this->range($request, $hotel));
+
+        return $this->success($registers->overview($hotel, $this->outletId($request), $from, $to));
+    }
+
+    public function storeDailyRegister(Request $request, AuditService $audit): JsonResponse
+    {
+        $hotel = $request->attributes->get('currentHotel');
+        $outletId = $this->outletId($request);
+        $data = $this->dailyRegisterData($request);
+        if (DailyMoneyRegister::query()->where('outlet_id', $outletId)->whereDate('business_date', $data['business_date'])->exists()) {
+            throw ValidationException::withMessages(['business_date' => ['A daily entry already exists for this date. Edit the existing entry instead.']]);
+        }
+        $register = DailyMoneyRegister::query()->create([
+            ...$data,
+            'hotel_id' => $hotel->id,
+            'outlet_id' => $outletId,
+            'created_by' => $request->user()->id,
+            'updated_by' => $request->user()->id,
+        ]);
+        $audit->record($register, 'finance.daily_register.created', $request->user(), $hotel->id, $outletId, $data);
+
+        return $this->success($register->load(['creator:id,name', 'updater:id,name']), 'Daily balance saved.', 201);
+    }
+
+    public function updateDailyRegister(Request $request, int $register, AuditService $audit): JsonResponse
+    {
+        $hotel = $request->attributes->get('currentHotel');
+        $outletId = $this->outletId($request);
+        $register = DailyMoneyRegister::query()
+            ->where('hotel_id', $hotel->id)
+            ->where('outlet_id', $outletId)
+            ->findOrFail($register);
+        $before = $register->only(['business_date', 'actual_online', 'actual_cash', 'notes']);
+        $data = $this->dailyRegisterData($request, true);
+        if (isset($data['business_date'])) {
+            $duplicate = DailyMoneyRegister::query()
+                ->where('outlet_id', $outletId)
+                ->whereDate('business_date', $data['business_date'])
+                ->whereKeyNot($register->id)
+                ->exists();
+            if ($duplicate) {
+                throw ValidationException::withMessages(['business_date' => ['A daily entry already exists for this date.']]);
+            }
+        }
+        $register->update([...$data, 'updated_by' => $request->user()->id]);
+        $audit->record($register, 'finance.daily_register.updated', $request->user(), $hotel->id, $outletId, [
+            'before' => $before,
+            'after' => $register->fresh()->only(['business_date', 'actual_online', 'actual_cash', 'notes']),
+        ]);
+
+        return $this->success($register->fresh()->load(['creator:id,name', 'updater:id,name']), 'Daily balance updated.');
     }
 
     /** @return array{from: string, to: string} */
@@ -142,5 +214,35 @@ class FinanceController extends ApiController
             'due_on' => ['nullable', 'date'],
             'is_active' => ['sometimes', 'boolean'],
         ]);
+    }
+
+    /** @return array{business_date?: string, actual_online?: float, actual_cash?: float, notes?: ?string} */
+    private function dailyRegisterData(Request $request, bool $updating = false): array
+    {
+        $hotel = $request->attributes->get('currentHotel');
+        $data = $request->validate([
+            'business_date' => [$updating ? 'sometimes' : 'required', 'date', 'before_or_equal:'.HotelDate::businessDate($hotel)],
+            'actual_online' => [$updating ? 'sometimes' : 'required', 'numeric', 'min:0', 'max:999999999999.99'],
+            'actual_cash' => [$updating ? 'sometimes' : 'required', 'numeric', 'min:0', 'max:999999999999.99'],
+            'notes' => ['nullable', 'string', 'max:1000'],
+        ]);
+        if (array_key_exists('notes', $data)) {
+            $data['notes'] = filled($data['notes']) ? trim((string) $data['notes']) : null;
+        }
+
+        return $data;
+    }
+
+    private function outletId(Request $request): int
+    {
+        $outletId = $request->attributes->get('currentOutletId')
+            ?? collect($request->attributes->get('accessibleOutletIds', []))->first();
+        abort_if($outletId === null, 422, 'Select an outlet before using the daily register.');
+        Outlet::query()
+            ->where('hotel_id', $request->attributes->get('currentHotel')->id)
+            ->whereIn('id', $request->attributes->get('accessibleOutletIds', []))
+            ->findOrFail($outletId);
+
+        return (int) $outletId;
     }
 }

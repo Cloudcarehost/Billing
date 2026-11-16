@@ -61,4 +61,9 @@ class Outlet extends Model
     {
         return $this->hasMany(CustomerComplaint::class);
     }
+
+    public function dailyMoneyRegisters(): HasMany
+    {
+        return $this->hasMany(DailyMoneyRegister::class);
+    }
 }

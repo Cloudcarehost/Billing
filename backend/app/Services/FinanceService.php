@@ -29,16 +29,18 @@ class FinanceService
     }
 
     /** @return array<string, mixed> */
-    public function summary(Hotel $hotel, string $from, string $to): array
+    public function summary(Hotel $hotel, string $from, string $to, ?int $outletId = null): array
     {
         $billed = Money::fromMinor(Money::toMinor(Invoice::query()
             ->where('hotel_id', $hotel->id)
+            ->when($outletId, fn ($query, $id) => $query->where('outlet_id', $id))
             ->where('status', InvoiceStatus::Issued->value)
             ->whereBetween('business_date', [$from, $to.' 23:59:59'])
             ->sum('total_amount')));
 
         $entries = LedgerEntry::query()
             ->where('hotel_id', $hotel->id)
+            ->when($outletId, fn ($query, $id) => $query->where('outlet_id', $id))
             ->whereBetween('occurred_on', [$from, $to])
             ->orderByDesc('occurred_on')
             ->orderByDesc('id')

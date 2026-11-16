@@ -84,6 +84,11 @@ class Hotel extends Model
         return $this->hasMany(LedgerEntry::class);
     }
 
+    public function dailyMoneyRegisters(): HasMany
+    {
+        return $this->hasMany(DailyMoneyRegister::class);
+    }
+
     public function customerComplaints(): HasMany
     {
         return $this->hasMany(CustomerComplaint::class);
