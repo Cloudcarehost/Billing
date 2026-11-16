@@ -226,6 +226,7 @@ button, input, select, textarea { font: inherit; } button { cursor: pointer; } a
 .money-entry-row b { margin-left: auto; font-size: 13px; white-space: nowrap; }
 .money-entry-row .row-actions { margin-left: 4px; }
 .money-entry-row .row-action { min-width: 44px; min-height: 44px; }
+.money-entry-creator { color: var(--color-text); font-size: 11px; font-weight: 600; }
 .money-type-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
 .money-type-toggle button { min-height: 48px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); color: var(--color-ink); background: white; font-size: 14px; font-weight: 800; }
 .money-type-toggle button.selected { border-color: var(--color-primary); color: white; background: var(--color-primary); }
