@@ -48,6 +48,14 @@ class FinanceAndOwnersTest extends TestCase
         Payment::query()->create([
             'invoice_id' => $invoice->id,
             'received_by' => $owner->id,
+            'type' => 'payment',
+            'method' => 'cash',
+            'amount' => 1000,
+            'paid_at' => '2026-11-16 09:00:00',
+        ]);
+        Payment::query()->create([
+            'invoice_id' => $invoice->id,
+            'received_by' => $owner->id,
             'type' => 'refund',
             'method' => 'cash',
             'amount' => -100,
@@ -93,14 +101,14 @@ class FinanceAndOwnersTest extends TestCase
         ])->assertCreated();
 
         $overview = $this->getJson('/api/v1/finance/daily-register?from=2026-11-15&to=2026-11-16')->assertOk();
-        $overview->assertJsonPath('data.summary.net_sales', '900.00')
+        $overview->assertJsonPath('data.summary.collections', '900.00')
             ->assertJsonPath('data.summary.expenses', '200.00')
             ->assertJsonPath('data.summary.other_income', '50.00')
             ->assertJsonPath('data.summary.actual_online', '1000.00')
             ->assertJsonPath('data.summary.actual_cash', '750.00')
             ->assertJsonPath('data.rows.0.business_date', '2026-11-16')
             ->assertJsonPath('data.rows.0.yesterday_total', '1000.00')
-            ->assertJsonPath('data.rows.0.net_sales', '900.00')
+            ->assertJsonPath('data.rows.0.collections', '900.00')
             ->assertJsonPath('data.rows.0.expected_total', '1750.00')
             ->assertJsonPath('data.rows.0.actual_total', '1750.00')
             ->assertJsonPath('data.rows.0.difference', '0.00')
