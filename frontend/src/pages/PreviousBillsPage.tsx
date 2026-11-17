@@ -126,7 +126,7 @@ function PreviousBillList() {
           {rows.map((row) => {
             const due = row.status === 'issued' && row.payment_status !== 'paid'
             return <tr key={row.id} className={due ? 'bill-due-row' : row.status === 'voided' ? 'bill-voided-row' : ''} onClick={() => navigate(`/app/billing/history/${row.id}${search ? `?${search}` : ''}`)}>
-              <td><strong>{row.invoice_number}</strong>{row.creator?.name ? <small>{row.creator.name}</small> : null}</td>
+              <td><strong>{row.invoice_number}</strong>{row.replaces ? <small>Corrected from {row.replaces.invoice_number}</small> : row.replacement ? <small>Replaced by {row.replacement.invoice_number}</small> : row.creator?.name ? <small>{row.creator.name}</small> : null}</td>
               <td>{row.billed_at ? new Date(row.billed_at).toLocaleString() : row.business_date ?? '—'}</td>
               <td>{row.table_name || '—'}<small>{isParcelTable({ service_type: row.service_type }) ? 'Parcel' : 'Dine in'}</small></td>
               <td>{row.charged_to?.name || row.customer_name || '—'}{row.customer_phone ? <small>{row.customer_phone}</small> : null}</td>
@@ -169,7 +169,7 @@ function PreviousBillView({ invoiceId }: { invoiceId: number }) {
 
   return <section className="billing-page previous-bill-page">
     <div className="page-heading"><div><p className="eyebrow">COUNTER BILLING</p><h1>{invoice?.invoice_number ?? 'Bill'}</h1><p>Same receipt as after take payment — print, collect a remaining balance, or record a correction.</p></div><Link className="button button-secondary" to={listPath}><ArrowLeft size={15} />Back to previous bills</Link></div>
-    <main className="invoice-panel receipt-panel previous-bill-panel">{!invoice && !error ? <p className="empty-row">Loading bill…</p> : invoice ? <InvoiceReceiptPanel invoice={invoice} busy={busy} tableName={tableName} serviceLabel={serviceLabel} onBusy={setBusy} onInvoiceChange={setInvoice} onNotice={setNotice} onError={setError} onReopened={() => navigate('/app/billing')} onVoided={() => navigate(listPath)} /> : <p className="empty-row">This bill could not be opened.</p>}</main>
+    <main className="invoice-panel receipt-panel previous-bill-panel">{!invoice && !error ? <p className="empty-row">Loading bill…</p> : invoice ? <InvoiceReceiptPanel invoice={invoice} busy={busy} tableName={tableName} serviceLabel={serviceLabel} onBusy={setBusy} onInvoiceChange={setInvoice} onNotice={setNotice} onError={setError} onReopened={(updated) => navigate(`/app/billing?session=${updated.id}`)} onVoided={() => navigate(listPath)} /> : <p className="empty-row">This bill could not be opened.</p>}</main>
     <Toast message={notice || error} tone={error ? 'error' : 'success'} onDismiss={() => { setNotice(''); setError('') }} />
   </section>
 }

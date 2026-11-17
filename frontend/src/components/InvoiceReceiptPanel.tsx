@@ -1,4 +1,4 @@
-import { CreditCard, Plus, Printer, Undo2, X } from 'lucide-react'
+import { Clock3, CreditCard, Plus, Printer, Undo2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Modal, PromptDialog } from './ui/Feedback'
 import { useAuth } from '../features/auth/AuthContext'
@@ -23,6 +23,7 @@ export function InvoiceReceiptPanel({
   onError,
   onReopened,
   onVoided,
+  onReleased,
 }: {
   invoice: Invoice
   busy: boolean
@@ -34,6 +35,7 @@ export function InvoiceReceiptPanel({
   onError: (message: string) => void
   onReopened?: (session: DiningSession) => void
   onVoided?: () => void
+  onReleased?: (invoice: Invoice) => void
 }) {
   const { session, activeOutletId } = useAuth()
   const [guest, setGuest] = useState<Guest>({ customer_name: '', customer_phone: '', customer_email: '', customer_gstin: '' })
@@ -42,6 +44,9 @@ export function InvoiceReceiptPanel({
   const [voidOpen, setVoidOpen] = useState(false)
   const [reopenOpen, setReopenOpen] = useState(false)
   const [refundPayment, setRefundPayment] = useState<{ id: number; amount: string; refunded?: string; reason: string } | null>(null)
+  const [pendingOpen, setPendingOpen] = useState(false)
+  const [assignees, setAssignees] = useState<Array<{ id: number; name: string }>>([])
+  const [pendingDetails, setPendingDetails] = useState({ assigned_to_user_id: '', note: '' })
   const currency = session?.hotel.currency_code
   const items = invoice.items ?? []
   const customerItems = groupBillLines(items.filter(printsOnCustomerBill))
@@ -56,6 +61,13 @@ export function InvoiceReceiptPanel({
       customer_gstin: invoice.customer_gstin ?? '',
     })
   }, [invoice.id, invoice.customer_name, invoice.customer_phone, invoice.customer_email, invoice.customer_gstin])
+
+  useEffect(() => {
+    if (!pendingOpen || assignees.length) return
+    void api.get<ApiEnvelope<Array<{ id: number; name: string }>>>('/api/v1/billing-assignees')
+      .then((response) => setAssignees(unwrap(response)))
+      .catch((requestError) => onError(errorMessage(requestError)))
+  }, [pendingOpen, assignees.length, onError])
 
   const guestPayload = () => Object.fromEntries(Object.entries(guest).map(([key, entry]) => [key, entry.trim() || null]))
 
@@ -113,6 +125,28 @@ export function InvoiceReceiptPanel({
     } catch (requestError) { onError(errorMessage(requestError)) } finally { onBusy(false) }
   }
 
+  const keepPending = async () => {
+    if (busy) return
+    const ownerAccount = Boolean(invoice.charged_to_user_id)
+    if (!ownerAccount && (!guest.customer_name.trim() || !guest.customer_phone.trim() || !pendingDetails.assigned_to_user_id)) {
+      onError('Customer name, phone and related staff member are required.')
+      return
+    }
+    onBusy(true)
+    try {
+      const endpoint = ownerAccount ? 'close-owner-account' : 'keep-pending'
+      const updated = unwrap(await api.post<ApiEnvelope<Invoice>>(`/api/v1/invoices/${invoice.id}/${endpoint}`, {
+        ...guestPayload(),
+        assigned_to_user_id: pendingDetails.assigned_to_user_id ? Number(pendingDetails.assigned_to_user_id) : invoice.charged_to_user_id,
+        note: pendingDetails.note.trim() || null,
+      }, { headers: idempotencyHeaders() }))
+      onInvoiceChange(updated)
+      setPendingOpen(false)
+      onNotice(ownerAccount ? 'Owner account saved. The table is available.' : `${money(updated.balance_amount, currency)} kept pending. The table is available.`)
+      onReleased?.(updated)
+    } catch (requestError) { onError(errorMessage(requestError)) } finally { onBusy(false) }
+  }
+
   const printReceipt = (bill: Invoice, duplicate: boolean) => {
     if (!session) return
     const printed = printThermalReceipt({
@@ -148,6 +182,8 @@ export function InvoiceReceiptPanel({
 
   return <>
     <div className="invoice-heading"><div><h2>{invoice.invoice_number}</h2><span>{readable(invoice.status)} · {readable(invoice.payment_status)}{tableName ? ` · ${tableName}` : ''}</span></div><div className="receipt-actions"><button type="button" className="button button-secondary" onClick={() => void reprint()}><Printer size={15} />Print</button>{can(session, 'billing.create') && invoice.status === 'issued' && value(invoice.paid_amount) === 0 && <button type="button" className="button button-secondary" onClick={() => setReopenOpen(true)}><Undo2 size={15} />Correct bill</button>}{can(session, 'billing.void') && invoice.status === 'issued' && <button type="button" className="button button-secondary" onClick={() => setVoidOpen(true)}><Undo2 size={15} />Void</button>}</div></div>
+    {invoice.replaces && <p className="invoice-correction-link">Corrected from {invoice.replaces.invoice_number}</p>}
+    {invoice.replacement && <p className="invoice-correction-link">Replaced by {invoice.replacement.invoice_number}</p>}
     <div className="invoice-lines">
       <div className="bill-line-section">
         {internalItems.length > 0 && customerItems.length > 0 && <h3>Customer bill</h3>}
@@ -166,8 +202,10 @@ export function InvoiceReceiptPanel({
     {invoice.status !== 'voided' && can(session, 'billing.create') && <div className="discount-row guest-details"><label className="field"><span>Guest name (optional)</span><input value={guest.customer_name} onChange={(event) => setGuest((currentGuest) => ({ ...currentGuest, customer_name: event.target.value }))} placeholder="Not required to bill" /></label><label className="field"><span>Phone (optional)</span><input value={guest.customer_phone} onChange={(event) => setGuest((currentGuest) => ({ ...currentGuest, customer_phone: event.target.value }))} /></label><label className="field"><span>Email (optional)</span><input type="email" value={guest.customer_email} onChange={(event) => setGuest((currentGuest) => ({ ...currentGuest, customer_email: event.target.value }))} /></label><label className="field"><span>GSTIN (optional)</span><input value={guest.customer_gstin} onChange={(event) => setGuest((currentGuest) => ({ ...currentGuest, customer_gstin: event.target.value }))} /></label><button type="button" className="button button-secondary" disabled={busy} onClick={() => void saveGuest()}>Save guest details</button></div>}
     <div className="invoice-total"><span>Total</span><strong>{money(invoice.total_amount, currency)}</strong>{value(invoice.discount_amount) > 0 ? <span>Discount {money(invoice.discount_amount, currency)}</span> : null}<span>Paid {money(invoice.paid_amount, currency)} · Balance {money(invoice.balance_amount, currency)}</span>{invoice.charged_to?.name ? <span>On account: {invoice.charged_to.name}</span> : null}</div>
     <div className="payment-summary">{invoice.payments?.map((payment) => <div key={payment.id}><span>{readable(payment.method)}<small>{new Date(payment.paid_at).toLocaleString()}</small></span><strong>{money(payment.amount, currency)}</strong>{can(session, 'billing.refund') && payment.type !== 'refund' && Number(payment.amount) - Number(payment.refunded_amount ?? 0) > 0 && <button type="button" className="text-danger" onClick={() => setRefundPayment({ id: payment.id, amount: (Number(payment.amount) - Number(payment.refunded_amount ?? 0)).toFixed(2), refunded: payment.refunded_amount ?? '0', reason: '' })}>Refund remaining {(Number(payment.amount) - Number(payment.refunded_amount ?? 0)).toFixed(2)}</button>}</div>)}</div>
-    {invoice.status === 'issued' && value(invoice.balance_amount) > 0 && <button type="button" className="button button-primary button-full" onClick={() => { setPayments([{ method: 'cash', amount: invoice.balance_amount, reference_number: '' }]); setPaymentOpen(true) }}><CreditCard size={16} />Take payment</button>}
+    {invoice.receivable && <div className={`receivable-banner ${invoice.receivable.status}`}><Clock3 size={17} /><span><strong>{invoice.receivable.type === 'owner_account' ? 'Owner account' : 'Outstanding collection'}</strong><small>{invoice.receivable.status === 'open' ? `${money(invoice.balance_amount, currency)} remaining${invoice.receivable.assignee?.name ? ` · Related to ${invoice.receivable.assignee.name}` : ''}` : readable(invoice.receivable.status)}</small></span></div>}
+    {invoice.status === 'issued' && value(invoice.balance_amount) > 0 && <div className="invoice-settlement-actions"><button type="button" className="button button-primary" onClick={() => { setPayments([{ method: 'cash', amount: invoice.balance_amount, reference_number: '' }]); setPaymentOpen(true) }}><CreditCard size={16} />Take payment</button>{can(session, 'billing.create') && !invoice.receivable && <button type="button" className="button button-secondary" onClick={() => { setPendingDetails({ assigned_to_user_id: invoice.charged_to_user_id ? String(invoice.charged_to_user_id) : '', note: '' }); setPendingOpen(true) }}><Clock3 size={16} />{invoice.charged_to_user_id ? 'Close table' : 'Keep pending'}</button>}</div>}
     <Modal open={paymentOpen} title="Split payment" onClose={() => !busy && setPaymentOpen(false)}><p className="modal-intro">Balance: <strong>{money(invoice.balance_amount, currency)}</strong></p><div className="split-payment-list">{payments.map((payment, index) => <div className="split-payment" key={index}><label className="field"><span>Method</span><select value={payment.method} onChange={(event) => setPayments((currentPayments) => currentPayments.map((entry, entryIndex) => entryIndex === index ? { ...entry, method: event.target.value as 'cash' | 'card' | 'upi' } : entry))}><option value="cash">Cash</option><option value="card">Card</option><option value="upi">UPI</option></select></label><label className="field"><span>Amount</span><input type="number" min="0" value={payment.amount} onChange={(event) => setPayments((currentPayments) => currentPayments.map((entry, entryIndex) => entryIndex === index ? { ...entry, amount: event.target.value } : entry))} /></label><label className="field"><span>Reference (optional)</span><input value={payment.reference_number} onChange={(event) => setPayments((currentPayments) => currentPayments.map((entry, entryIndex) => entryIndex === index ? { ...entry, reference_number: event.target.value } : entry))} /></label>{payments.length > 1 && <button type="button" className="remove-payment" onClick={() => setPayments((currentPayments) => currentPayments.filter((_, entryIndex) => entryIndex !== index))}><X size={16} /></button>}</div>)}</div><div className="form-action-row"><button type="button" className="button button-secondary" onClick={() => setPayments((currentPayments) => [...currentPayments, { method: 'cash', amount: '', reference_number: '' }])}><Plus size={15} />Split payment</button><button type="button" className="button button-primary" disabled={busy} onClick={() => void pay()}>{busy ? 'Saving…' : 'Confirm payment'}</button></div></Modal>
+    <Modal open={pendingOpen} title={invoice.charged_to_user_id ? 'Close owner account bill' : 'Keep payment pending'} description={`Outstanding balance: ${money(invoice.balance_amount, currency)}. Confirming will make ${tableName} available for a new order.`} onClose={() => !busy && setPendingOpen(false)}><div className="pending-bill-form">{!invoice.charged_to_user_id && <><label className="field"><span>Customer name</span><input required value={guest.customer_name} onChange={(event) => setGuest((current) => ({ ...current, customer_name: event.target.value }))} /></label><label className="field"><span>Phone</span><input required value={guest.customer_phone} onChange={(event) => setGuest((current) => ({ ...current, customer_phone: event.target.value }))} inputMode="tel" /></label><label className="field"><span>Email (optional)</span><input type="email" value={guest.customer_email} onChange={(event) => setGuest((current) => ({ ...current, customer_email: event.target.value }))} /></label></>}<label className="field"><span>Related to</span><select required={!invoice.charged_to_user_id} value={pendingDetails.assigned_to_user_id} onChange={(event) => setPendingDetails((current) => ({ ...current, assigned_to_user_id: event.target.value }))}><option value="">Select active staff or owner</option>{assignees.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label><label className="field pending-note"><span>Follow-up note (optional)</span><textarea rows={3} maxLength={2000} value={pendingDetails.note} onChange={(event) => setPendingDetails((current) => ({ ...current, note: event.target.value }))} /></label></div><div className="pending-bill-confirm">Keep <strong>{money(invoice.balance_amount, currency)}</strong> pending and free <strong>{tableName}</strong>?</div><div className="form-action-row"><button type="button" className="button button-secondary" disabled={busy} onClick={() => setPendingOpen(false)}>Cancel</button><button type="button" className="button button-primary" disabled={busy} onClick={() => void keepPending()}>{busy ? 'Saving…' : invoice.charged_to_user_id ? 'Close table' : 'Keep pending'}</button></div></Modal>
     <PromptDialog open={voidOpen} title="Void invoice" description="This never deletes the bill. It creates a permanent void record that stays in the audit trail." label="Required reason" type="textarea" minLength={3} confirmLabel="Void bill" busy={busy} onClose={() => !busy && setVoidOpen(false)} onConfirm={(reason) => void voidInvoice(reason)} />
     <PromptDialog open={reopenOpen} title="Correct this bill?" description="The current invoice is kept as voided. The table or parcel stays open so you can exclude items, add items, apply discount, and create the bill again." label="Required reason" type="textarea" minLength={3} confirmLabel="Reopen bill" busy={busy} onClose={() => !busy && setReopenOpen(false)} onConfirm={(reason) => void reopenBill(reason)} />
     <Modal open={Boolean(refundPayment)} title="Refund payment" description="Refunds cannot exceed the remaining amount on this payment." onClose={() => !busy && setRefundPayment(null)}>{refundPayment && <><p className="modal-intro">You can refund up to the remaining amount{refundPayment.refunded && Number(refundPayment.refunded) > 0 ? ` (${refundPayment.refunded} already refunded)` : ''}.</p><label className="field"><span>Refund amount</span><input type="number" min="0.01" step="0.01" max={refundPayment.amount} value={refundPayment.amount} onChange={(event) => setRefundPayment({ ...refundPayment, amount: event.target.value })} /></label><label className="field"><span>Required reason</span><textarea rows={3} value={refundPayment.reason} onChange={(event) => setRefundPayment({ ...refundPayment, reason: event.target.value })} /></label><div className="form-action-row"><button type="button" className="button button-secondary button-touch" onClick={() => setRefundPayment(null)}>Cancel</button><button type="button" className="button button-primary button-touch" disabled={busy || refundPayment.reason.trim().length < 3} onClick={() => void refund()}>{busy ? 'Saving…' : 'Confirm refund'}</button></div></>}</Modal>

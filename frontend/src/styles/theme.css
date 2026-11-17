@@ -193,6 +193,37 @@ button, input, select, textarea { font: inherit; } button { cursor: pointer; } a
   .modal-backdrop { align-items: end; padding: 0; }
   .app-modal { width: 100%; max-height: 92dvh; border-radius: 18px 18px 0 0; }
 }
+
+/* Outstanding invoice collection */
+.invoice-settlement-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.invoice-settlement-actions .button { min-height: 46px; }
+.pending-bill-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.pending-bill-form .pending-note { grid-column: 1 / -1; }
+.pending-bill-confirm { margin: 14px 0; padding: 12px 14px; border: 1px solid #f1d18a; border-radius: 10px; background: #fff9e9; color: #684600; }
+.receivable-banner { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 11px 13px; border: 1px solid #f1d18a; border-radius: 10px; background: #fff9e9; color: #684600; }
+.receivable-banner > span { display: grid; gap: 2px; }
+.receivable-banner small { color: inherit; opacity: .8; }
+.receivable-banner.settled { border-color: #a7dec2; background: #effaf4; color: #0b6840; }
+.receivable-banner.voided { border-color: #efb3b3; background: #fff2f2; color: #a51f1f; }
+.invoice-correction-link, .billing-correction-note { margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; background: #f4f7fb; color: var(--color-muted); font-size: 12px; }
+.billing-correction-note { margin-bottom: 12px; border-left: 3px solid #2379ec; }
+.dashboard-receivables { margin: 18px 0; }
+.dashboard-receivables .data-card-heading > div { flex: 1; }
+.dashboard-receivables .data-card-heading small { display: block; margin-top: 3px; color: var(--color-muted); font-weight: 400; }
+.dashboard-receivables .data-card-heading > strong { color: #b42318; font-size: 18px; }
+.dashboard-receivables table { min-width: 1050px; }
+.receivable-note { max-width: 260px; white-space: normal; }
+.receivable-actions { display: flex; gap: 7px; }
+.receivable-actions .button { min-height: 36px; padding: 7px 10px; }
+.pending-payment-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+
+@media (max-width: 760px) {
+  .invoice-settlement-actions, .pending-bill-form, .pending-payment-form { grid-template-columns: 1fr; }
+  .invoice-settlement-actions .button { width: 100%; min-height: 48px; }
+  .pending-bill-form .pending-note { grid-column: auto; }
+  .dashboard-receivables .data-card-heading { align-items: flex-start; flex-wrap: wrap; }
+  .receivable-actions .button { min-width: 44px; min-height: 44px; }
+}
 @media (min-width: 761px) {
   .waiter-sticky-actions { display: none !important; }
 }

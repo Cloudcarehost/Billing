@@ -25,6 +25,7 @@ class InvoiceService
             } if ($invoice->status !== 'issued') {
                 throw ValidationException::withMessages(['invoice' => ['Only issued invoices can be voided.']]);
             } $invoice->update(['status' => 'voided', 'voided_at' => now(), 'voided_by' => $user->id, 'void_reason' => $reason]);
+            app(InvoiceReceivableService::class)->void($invoice);
             if ($session && $session->status !== 'closed') {
                 $session->update(['status' => 'closed', 'closed_at' => now()]);
                 $session->loadMissing('diningTable', 'waiter', 'joinedTables:id,name');
@@ -58,15 +59,21 @@ class InvoiceService
             if ($invoice->status !== 'issued') {
                 throw ValidationException::withMessages(['invoice' => ['Only an unpaid issued bill can be corrected.']]);
             }
+            $released = $invoice->receivable()->whereIn('status', ['open', 'settled'])->exists() && $session->status === 'closed';
             $invoice->update(['status' => 'voided', 'voided_at' => now(), 'voided_by' => $user->id, 'void_reason' => $reason]);
-            $session->update(['status' => 'occupied', 'closed_at' => null]);
+            app(InvoiceReceivableService::class)->void($invoice);
+            $session->update($released
+                ? ['correction_of_invoice_id' => $invoice->id]
+                : ['status' => 'occupied', 'closed_at' => null, 'correction_of_invoice_id' => $invoice->id]);
             ReportService::invalidateDashboard($invoice->hotel_id);
             $session->loadMissing('diningTable', 'waiter', 'orders.items', 'joinedTables:id,name');
-            RestaurantRealtime::dispatchToMembers('invoice_reopened', $session, [
-                'invoice_id' => $invoice->id,
-                'voided' => true,
-                'session_status' => 'occupied',
-            ]);
+            if (! $released) {
+                RestaurantRealtime::dispatchToMembers('invoice_reopened', $session, [
+                    'invoice_id' => $invoice->id,
+                    'voided' => true,
+                    'session_status' => 'occupied',
+                ]);
+            }
             OpenBillSnapshotService::queue($invoice->hotel_id);
 
             return $session->fresh()->load('diningTable', 'waiter', 'orders.items', 'invoice');

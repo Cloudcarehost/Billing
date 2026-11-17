@@ -21,20 +21,10 @@ class DailyMoneyRegisterService
     {
         $today = HotelDate::businessDate($hotel);
         $effectiveTo = CarbonImmutable::parse($to)->greaterThan(CarbonImmutable::parse($today)) ? $today : $to;
-        $sales = Invoice::query()
-            ->where('hotel_id', $hotel->id)
-            ->where('outlet_id', $outletId)
-            ->where('status', InvoiceStatus::Issued->value)
-            ->whereBetween('business_date', [$from, $effectiveTo.' 23:59:59'])
-            ->selectRaw('business_date, SUM(total_amount) as amount')
-            ->groupBy('business_date')
-            ->get()
-            ->mapWithKeys(fn ($row) => [CarbonImmutable::parse($row->business_date)->toDateString() => Money::toMinor($row->amount)]);
-
-        $refunds = [];
-        foreach ($this->refunds($hotel, $outletId, $from, $effectiveTo) as $refund) {
-            $date = HotelDate::businessDate($hotel, $refund->paid_at);
-            $refunds[$date] = ($refunds[$date] ?? 0) + Money::toMinor($refund->amount);
+        $collections = [];
+        foreach ($this->payments($hotel, $outletId, $from, $effectiveTo) as $payment) {
+            $date = HotelDate::businessDate($hotel, $payment->paid_at);
+            $collections[$date] = ($collections[$date] ?? 0) + Money::toMinor($payment->amount);
         }
 
         $ledger = LedgerEntry::query()
@@ -73,17 +63,17 @@ class DailyMoneyRegisterService
             : 0;
 
         $rows = [];
-        $periodSales = 0;
+        $periodCollections = 0;
         $periodExpenses = 0;
         $periodIncome = 0;
         $cursor = CarbonImmutable::parse($from)->startOfDay();
         $last = CarbonImmutable::parse($effectiveTo)->startOfDay();
         while ($cursor->lessThanOrEqualTo($last)) {
             $date = $cursor->toDateString();
-            $netSales = (int) ($sales[$date] ?? 0) + (int) ($refunds[$date] ?? 0);
+            $received = (int) ($collections[$date] ?? 0);
             $expense = (int) ($expenses[$date] ?? 0);
             $otherIncome = (int) ($income[$date] ?? 0);
-            $expected = $carriedTotal + $netSales + $otherIncome - $expense;
+            $expected = $carriedTotal + $received + $otherIncome - $expense;
             /** @var DailyMoneyRegister|null $register */
             $register = $registers->get($date);
             $actualOnline = $register ? Money::toMinor($register->actual_online) : null;
@@ -94,7 +84,7 @@ class DailyMoneyRegisterService
             $rows[] = [
                 'business_date' => $date,
                 'yesterday_total' => Money::fromMinor($carriedTotal),
-                'net_sales' => Money::fromMinor($netSales),
+                'collections' => Money::fromMinor($received),
                 'expenses' => Money::fromMinor($expense),
                 'other_income' => Money::fromMinor($otherIncome),
                 'expected_total' => Money::fromMinor($expected),
@@ -109,7 +99,7 @@ class DailyMoneyRegisterService
                 'updated_by' => $register?->updater ? ['id' => $register->updater->id, 'name' => $register->updater->name] : null,
             ];
 
-            $periodSales += $netSales;
+            $periodCollections += $received;
             $periodExpenses += $expense;
             $periodIncome += $otherIncome;
             $carriedTotal = $actualTotal ?? $expected;
@@ -123,7 +113,7 @@ class DailyMoneyRegisterService
             'period' => compact('from', 'to'),
             'outlet_id' => $outletId,
             'summary' => [
-                'net_sales' => Money::fromMinor($periodSales),
+                'collections' => Money::fromMinor($periodCollections),
                 'expenses' => Money::fromMinor($periodExpenses),
                 'other_income' => Money::fromMinor($periodIncome),
                 'actual_online' => $latest ? Money::fromMinor(Money::toMinor($latest->actual_online)) : '0.00',
@@ -135,7 +125,7 @@ class DailyMoneyRegisterService
     }
 
     /** @return Collection<int, Payment> */
-    private function refunds(Hotel $hotel, int $outletId, string $from, string $to)
+    private function payments(Hotel $hotel, int $outletId, string $from, string $to)
     {
         $timezone = $hotel->timezone ?: config('app.timezone');
         $cutoff = substr((string) ($hotel->business_day_starts_at ?: '05:00:00'), 0, 8);
@@ -146,7 +136,8 @@ class DailyMoneyRegisterService
             ->join('invoices', 'invoices.id', '=', 'payments.invoice_id')
             ->where('invoices.hotel_id', $hotel->id)
             ->where('invoices.outlet_id', $outletId)
-            ->where('payments.type', PaymentType::Refund->value)
+            ->where('invoices.status', InvoiceStatus::Issued->value)
+            ->whereIn('payments.type', [PaymentType::Payment->value, PaymentType::Refund->value])
             ->where('payments.paid_at', '>=', $start)
             ->where('payments.paid_at', '<', $end)
             ->get(['payments.id', 'payments.amount', 'payments.paid_at']);

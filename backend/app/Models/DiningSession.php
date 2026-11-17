@@ -15,7 +15,7 @@ class DiningSession extends Model
     use HasFactory;
 
     protected $fillable = [
-        'hotel_id', 'outlet_id', 'dining_table_id', 'waiter_id', 'customer_id',
+        'hotel_id', 'outlet_id', 'dining_table_id', 'waiter_id', 'customer_id', 'correction_of_invoice_id',
         'guest_count', 'status', 'subtotal', 'discount_amount', 'discount_percent', 'tax_amount',
         'service_charge_amount', 'total_amount', 'opened_at', 'closed_at', 'closed_without_sale_by', 'closed_without_sale_reason', 'notes',
     ];
@@ -115,6 +115,11 @@ class DiningSession extends Model
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
+    }
+
+    public function correctionOfInvoice(): BelongsTo
+    {
+        return $this->belongsTo(Invoice::class, 'correction_of_invoice_id');
     }
 
     public function orders(): HasMany

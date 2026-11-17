@@ -6,13 +6,14 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Invoice extends Model
 {
     use HasFactory;
 
     protected $fillable = [
-        'hotel_id', 'outlet_id', 'customer_id', 'dining_session_id', 'created_by', 'charged_to_user_id', 'voided_by',
+        'hotel_id', 'outlet_id', 'customer_id', 'dining_session_id', 'created_by', 'charged_to_user_id', 'replaces_invoice_id', 'voided_by',
         'invoice_number', 'status', 'payment_status', 'business_date',
         'billed_at', 'voided_at', 'customer_name', 'customer_phone', 'customer_email', 'customer_gstin',
         'subtotal', 'discount_amount', 'tax_amount', 'service_charge_amount',
@@ -59,6 +60,21 @@ class Invoice extends Model
     public function chargedTo(): BelongsTo
     {
         return $this->belongsTo(User::class, 'charged_to_user_id');
+    }
+
+    public function replaces(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'replaces_invoice_id');
+    }
+
+    public function replacement(): HasOne
+    {
+        return $this->hasOne(self::class, 'replaces_invoice_id');
+    }
+
+    public function receivable(): HasOne
+    {
+        return $this->hasOne(InvoiceReceivable::class);
     }
 
     public function voider(): BelongsTo

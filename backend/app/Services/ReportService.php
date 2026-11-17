@@ -9,6 +9,7 @@ use App\Models\Hotel;
 use App\Models\InventoryStock;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
+use App\Models\InvoiceReceivable;
 use App\Models\LedgerEntry;
 use App\Models\OrderItem;
 use App\Models\Payment;
@@ -37,7 +38,21 @@ class ReportService
         return Cache::remember("reports:dashboard:{$hotel->id}:{$version}:{$outletId}:{$from}:{$to}", now()->addMinutes(3), function () use ($hotel, $from, $to, $outletId, $finance) {
             $invoices = Invoice::query()->where('invoices.hotel_id', $hotel->id)->whereBetween('invoices.business_date', [$from, $to.' 23:59:59'])->where('invoices.status', 'issued')->when($outletId, fn ($query) => $query->where('invoices.outlet_id', $outletId));
             $totals = (clone $invoices)->selectRaw('COUNT(*) as bills, COALESCE(SUM(total_amount), 0) as sales, COALESCE(SUM(tax_amount), 0) as tax, COALESCE(SUM(discount_amount), 0) as discount, SUM(CASE WHEN discount_amount > 0 THEN 1 ELSE 0 END) as discounted_bills, COALESCE(SUM((subtotal - discount_amount) - (SELECT COALESCE(SUM(invoice_items.unit_cost * invoice_items.quantity), 0) FROM invoice_items WHERE invoice_items.invoice_id = invoices.id)), 0) as gross_profit')->first();
-            $paymentTotals = (clone $invoices)->join('payments', 'payments.invoice_id', '=', 'invoices.id')->where('payments.type', 'payment')->selectRaw('payments.method, SUM(payments.amount) as amount')->groupBy('payments.method')->pluck('amount', 'method');
+            $timezone = $hotel->timezone ?: config('app.timezone');
+            $cutoff = substr((string) ($hotel->business_day_starts_at ?: '05:00:00'), 0, 8);
+            $paymentStart = CarbonImmutable::parse($from.' '.$cutoff, $timezone)->utc();
+            $paymentEnd = CarbonImmutable::parse($to.' '.$cutoff, $timezone)->addDay()->utc();
+            $paymentTotals = Payment::query()
+                ->join('invoices', 'invoices.id', '=', 'payments.invoice_id')
+                ->where('invoices.hotel_id', $hotel->id)
+                ->where('invoices.status', InvoiceStatus::Issued->value)
+                ->when($outletId, fn ($query) => $query->where('invoices.outlet_id', $outletId))
+                ->where('payments.paid_at', '>=', $paymentStart)
+                ->where('payments.paid_at', '<', $paymentEnd)
+                ->whereIn('payments.type', [PaymentType::Payment->value, PaymentType::Refund->value])
+                ->selectRaw('payments.method, SUM(payments.amount) as amount')
+                ->groupBy('payments.method')
+                ->pluck('amount', 'method');
             $topItems = (clone $invoices)->join('invoice_items', 'invoice_items.invoice_id', '=', 'invoices.id')->selectRaw('invoice_items.item_name, SUM(invoice_items.quantity) as quantity, SUM(invoice_items.line_total) as sales')->groupBy('invoice_items.item_name')->orderByDesc('sales')->limit(8)->get();
             $categorySales = (clone $invoices)->join('invoice_items', 'invoice_items.invoice_id', '=', 'invoices.id')->leftJoin('products', 'products.id', '=', 'invoice_items.product_id')->leftJoin('categories', 'categories.id', '=', 'products.category_id')->selectRaw("COALESCE(invoice_items.category_name, categories.name, 'Uncategorised') as category, SUM(invoice_items.line_total) as sales")->groupBy('category')->orderByDesc('sales')->get();
             $waiterSales = (clone $invoices)->leftJoin('dining_sessions', 'dining_sessions.id', '=', 'invoices.dining_session_id')->leftJoin('users', 'users.id', '=', 'dining_sessions.waiter_id')->selectRaw("COALESCE(users.name, 'Counter') as waiter, SUM(invoices.total_amount) as sales, COUNT(invoices.id) as bills")->groupBy('waiter')->orderByDesc('sales')->get();
@@ -57,8 +72,15 @@ class ReportService
             $expenseTotal = $finance->expenseTotal($hotel, $from, $to);
             $averageDailyEarnings = Money::fromMinor((int) round(Money::toMinor($totals->sales) / $days, 0, PHP_ROUND_HALF_UP));
             $averageDailyExpenses = Money::fromMinor((int) round(Money::toMinor($expenseTotal) / $days, 0, PHP_ROUND_HALF_UP));
+            $receivables = InvoiceReceivable::query()
+                ->where('invoice_receivables.hotel_id', $hotel->id)
+                ->where('invoice_receivables.status', 'open')
+                ->when($outletId, fn ($query) => $query->where('invoice_receivables.outlet_id', $outletId))
+                ->join('invoices', 'invoices.id', '=', 'invoice_receivables.invoice_id');
+            $outstanding = (clone $receivables)->selectRaw("COUNT(*) as count, COALESCE(SUM(invoices.balance_amount), 0) as amount, SUM(CASE WHEN invoice_receivables.type = 'owner_account' THEN 1 ELSE 0 END) as owner_accounts, SUM(CASE WHEN invoices.payment_status = 'partial' THEN 1 ELSE 0 END) as partial")->first();
+            $recentVoided = Invoice::query()->where('hotel_id', $hotel->id)->when($outletId, fn ($query) => $query->where('outlet_id', $outletId))->where('status', 'voided')->with('replacement:id,invoice_number,status,replaces_invoice_id')->latest('voided_at')->limit(5)->get(['id', 'invoice_number', 'total_amount', 'void_reason', 'voided_at']);
 
-            return ['period' => compact('from', 'to'), 'sales' => ['amount' => (string) $totals->sales, 'bills' => (int) $totals->bills, 'average_bill' => $totals->bills ? Money::fromMinor((int) round(Money::toMinor($totals->sales) / $totals->bills)) : Money::fromMinor(0), 'tax_collected' => (string) $totals->tax, 'gross_profit_estimate' => (string) $totals->gross_profit], 'daily_averages' => ['days' => $days, 'earnings' => $averageDailyEarnings, 'expenses' => $averageDailyExpenses], 'discounts' => ['amount' => Money::fromMinor(Money::toMinor($totals->discount ?? 0)), 'bills' => (int) $totals->discounted_bills], 'payment_totals' => $paymentTotals, 'pending_bills' => $pending, 'tables' => ['total' => $tableCount, 'available' => max(0, $tableCount - $occupiedTableCount), 'occupied' => $occupiedTableCount], 'top_items' => $topItems, 'category_sales' => $categorySales, 'waiter_sales' => $waiterSales, 'low_stock' => $lowStock, 'voided_bills' => Invoice::query()->where('hotel_id', $hotel->id)->whereBetween('business_date', [$from, $to.' 23:59:59'])->where('status', 'voided')->count(), 'cancelled_items' => OrderItem::query()->where('status', 'cancelled')->whereHas('order.diningSession', fn ($query) => $query->where('hotel_id', $hotel->id)->whereBetween('opened_at', [$from.' 00:00:00', $to.' 23:59:59']))->count(), 'wastage' => StockWastage::query()->where('hotel_id', $hotel->id)->whereBetween('occurred_at', [$from.' 00:00:00', $to.' 23:59:59'])->sum('quantity')];
+            return ['period' => compact('from', 'to'), 'sales' => ['amount' => (string) $totals->sales, 'bills' => (int) $totals->bills, 'average_bill' => $totals->bills ? Money::fromMinor((int) round(Money::toMinor($totals->sales) / $totals->bills)) : Money::fromMinor(0), 'tax_collected' => (string) $totals->tax, 'gross_profit_estimate' => (string) $totals->gross_profit], 'daily_averages' => ['days' => $days, 'earnings' => $averageDailyEarnings, 'expenses' => $averageDailyExpenses], 'discounts' => ['amount' => Money::fromMinor(Money::toMinor($totals->discount ?? 0)), 'bills' => (int) $totals->discounted_bills], 'payment_totals' => $paymentTotals, 'pending_bills' => $pending, 'outstanding' => ['count' => (int) $outstanding->count, 'amount' => (string) $outstanding->amount, 'owner_accounts' => (int) $outstanding->owner_accounts, 'partial' => (int) $outstanding->partial], 'tables' => ['total' => $tableCount, 'available' => max(0, $tableCount - $occupiedTableCount), 'occupied' => $occupiedTableCount], 'top_items' => $topItems, 'category_sales' => $categorySales, 'waiter_sales' => $waiterSales, 'low_stock' => $lowStock, 'voided_bills' => Invoice::query()->where('hotel_id', $hotel->id)->whereBetween('business_date', [$from, $to.' 23:59:59'])->where('status', 'voided')->count(), 'recent_voided' => $recentVoided, 'cancelled_items' => OrderItem::query()->where('status', 'cancelled')->whereHas('order.diningSession', fn ($query) => $query->where('hotel_id', $hotel->id)->whereBetween('opened_at', [$from.' 00:00:00', $to.' 23:59:59']))->count(), 'wastage' => StockWastage::query()->where('hotel_id', $hotel->id)->whereBetween('occurred_at', [$from.' 00:00:00', $to.' 23:59:59'])->sum('quantity')];
         });
     }
 

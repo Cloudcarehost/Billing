@@ -20,6 +20,7 @@ export function OrdersPage() {
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const [tables, setTables] = useState<DiningTable[]>([])
+  const [correctionSession, setCorrectionSession] = useState<DiningSession | null>(null)
   const { data: products = [] } = useQuery({ queryKey: ['order-products', activeOutletId], queryFn: async () => unwrap(await api.get<ApiEnvelope<Product[]>>('/api/v1/products/search', { params: { active: 1, limit: 2000 } })), staleTime: 5 * 60_000 })
   const { data: popular = [] } = useQuery({ queryKey: ['order-popular', activeOutletId], queryFn: async () => activeOutletId ? unwrap(await api.get<ApiEnvelope<PopularProduct[]>>('/api/v1/products/popular', { params: { outlet_id: activeOutletId, days: 14, limit: 8 } })) : [], enabled: Boolean(activeOutletId), staleTime: 5 * 60_000, placeholderData: [] })
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null)
@@ -35,6 +36,8 @@ export function OrdersPage() {
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const requestedTableId = Number(params.get('table')) || null
+  const requestedSessionId = Number(params.get('session')) || null
+  const fromBilling = params.get('from') === 'billing'
   const chooseTable = (tableId: number) => {
     setSelectedTableId(tableId)
     const next = new URLSearchParams(params)
@@ -65,6 +68,16 @@ export function OrdersPage() {
     } catch (requestError) { setError(errorMessage(requestError)) }
   }, [])
   useEffect(() => { const task = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(task) }, [load])
+  useEffect(() => {
+    if (!fromBilling || !requestedSessionId) return
+    const task = window.setTimeout(() => {
+      void api.get<ApiEnvelope<DiningSession>>(`/api/v1/dining-sessions/${requestedSessionId}`).then((response) => {
+        const selected = unwrap(response)
+        if (selected.correction_of_invoice_id && selected.status === 'closed') setCorrectionSession(selected)
+      }).catch((requestError) => setError(errorMessage(requestError)))
+    }, 0)
+    return () => window.clearTimeout(task)
+  }, [fromBilling, requestedSessionId])
   const selectedSessionId = tables.find((entry) => entry.id === selectedTableId)?.active_session?.id
   useEffect(() => { if (!selectedSessionId) return; const task = window.setTimeout(() => { void loadSelectedSession(selectedSessionId) }, 0); return () => window.clearTimeout(task) }, [selectedSessionId, loadSelectedSession])
   const { status } = useRestaurantRealtime({ outletId: activeOutletId ?? outletId, tableId: selectedTableId, onUpdate: (event) => {
@@ -86,7 +99,7 @@ export function OrdersPage() {
   useOperationalRefresh(refreshOperationalState, status)
   useEffect(() => { ingestFloorTables(tables) }, [tables, ingestFloorTables])
   const table = tables.find((entry) => entry.id === selectedTableId)
-  const active = table?.active_session
+  const active = correctionSession ?? table?.active_session
   const canAddItems = sessionCanTakeOrders(active)
   const categories = useMemo(() => Array.from(new Map(products.filter((product) => product.category).map((product) => [product.category!.id, product.category!])).values()), [products])
   const popularRank = useMemo(() => {
@@ -154,7 +167,7 @@ export function OrdersPage() {
     setBusy(true); setError('')
     try {
       const updated = unwrap(await api.post<ApiEnvelope<DiningSession>>(`/api/v1/dining-sessions/${active.id}/orders`, { items: cartItems.map(({ product, quantity, note }) => ({ product_id: product.id, quantity, kitchen_note: note || null })) }, { headers: idempotencyHeaders() }))
-      setCart({}); setTables((current) => current.map((entry) => entry.id === table.id ? tableWithSession(entry, updated) : entry)); setNotice(directBill ? 'Items added to the bill.' : 'Order sent to the kitchen.')
+      setCart({}); if (correctionSession) setCorrectionSession(updated); else if (table) setTables((current) => current.map((entry) => entry.id === table.id ? tableWithSession(entry, updated) : entry)); setNotice(correctionSession ? 'Items added to the billing correction.' : directBill ? 'Items added to the bill.' : 'Order sent to the kitchen.')
       if (params.get('from') === 'billing') {
         const billingSession = Number(params.get('session')) || active.id
         navigate(`/app/billing?session=${billingSession}`)
@@ -162,7 +175,7 @@ export function OrdersPage() {
     } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) }
   }
   const requestBill = async () => {
-    if (!active || busy) return
+    if (!active || !table || busy) return
     setBusy(true); setError('')
     try {
       const updated = unwrap(await api.post<ApiEnvelope<DiningSession>>(`/api/v1/dining-sessions/${active.id}/request-bill`))
@@ -178,7 +191,7 @@ export function OrdersPage() {
     } finally { setBusy(false) }
   }
   const cancelParcel = async () => {
-    if (!active || busy || !isParcelTable(table)) return
+    if (!active || !table || busy || !isParcelTable(table)) return
     setBusy(true); setError(''); setCancelParcelOpen(false)
     try {
       await api.post(`/api/v1/dining-sessions/${active.id}/cancel-parcel`)
@@ -220,7 +233,7 @@ export function OrdersPage() {
       <aside className="waiter-tables"><h2>Choose table</h2>{canOpenSession && <button type="button" className="waiter-table new-parcel-table" disabled={busy} onClick={() => void startParcel()}><strong>New parcel</strong><span>Takeaway for counter or waiter</span></button>}{tables.filter((entry) => !isParcelTable(entry) || entry.active_session || entry.id === selectedTableId).sort(compareTables).map((entry) => { const ready = readyToServeCount(entry, isDirectBillOutlet(session?.outlets, entry.outlet_id)); const called = Boolean(entry.waiter_called); return <button key={entry.id} type="button" className={`waiter-table ${entry.id === table?.id ? 'active' : ''} ${entry.display_status}${ready ? ' needs-serve' : ''}${called ? ' needs-waiter' : ''}`} onClick={() => chooseTable(entry.id)}><strong>{entry.name}<TableAlertMarks ready={ready} waiterCalled={called} /></strong><span>{entry.active_session ? `${isParcelTable(entry) ? 'Parcel' : `${entry.active_session.guest_count} guests`} · ${readable(entry.display_status)}${called ? ' · guest called' : ''}${ready ? ' · serve now' : ''}` : entry.is_active ? 'Available' : 'Unavailable'}</span><b>{money(entry.current_total, session?.hotel.currency_code)}</b></button> })}</aside>
       <main className="waiter-workspace">
         {!table ? <div className="empty-state"><TabletSmartphone size={34} /><h2>Select a table</h2><p>Choose a table to start a new order or continue a current one.</p></div> : !active ? <div className="empty-state"><ChefHat size={34} /><h2>{table.name} is available</h2><p>Start a session with the guest count before adding items.</p>{canOpenSession && <button type="button" className="button button-primary" disabled={!table.is_active || busy} onClick={() => void openTable()}><Plus size={16} />Assign table</button>}</div> : <>
-          <div className="waiter-session-bar"><div><span className={`table-state ${table.display_status}`}>{isParcelTable(table) ? 'Parcel' : readable(table.display_status)}</span><h2>{table.name} <small>{isParcelTable(table) ? 'Takeaway' : `${active.guest_count} guests`} · {active.waiter?.name ?? 'Current waiter'}</small></h2>{active.orders.length > 0 && <p className="additional-order-label">{!canAddItems ? 'Final bill created — extra items are locked' : directBill ? 'Additional items join this table bill' : 'Additional order — items below join this table as a new kitchen ticket'}</p>}</div>{readyItems > 0 && <span className="ready-alert"><BellRing size={15} />{readyItems} item{readyItems > 1 ? 's' : ''} ready</span>}<div className="waiter-session-actions">{isParcelTable(table) && canOpenSession && <button type="button" className="button button-danger-soft waiter-request-bill-desktop" disabled={busy} onClick={() => setCancelParcelOpen(true)}><Ban size={15} />Cancel parcel</button>}{can(session, 'billing.request') && <button type="button" className="button button-secondary waiter-request-bill-desktop" disabled={busy || active.status !== 'occupied'} onClick={() => void requestBill()}><ReceiptText size={15} />Request bill</button>}</div></div>
+          <div className="waiter-session-bar"><div><span className={`table-state ${table.display_status}`}>{correctionSession ? 'Billing correction' : isParcelTable(table) ? 'Parcel' : readable(table.display_status)}</span><h2>{table.name} <small>{correctionSession ? 'Historical bill · table remains available' : isParcelTable(table) ? 'Takeaway' : `${active.guest_count} guests · ${active.waiter?.name ?? 'Current waiter'}`}</small></h2>{active.orders.length > 0 && <p className="additional-order-label">{!canAddItems ? 'Final bill created — extra items are locked' : correctionSession ? 'Add missing items without reopening the physical table' : directBill ? 'Additional items join this table bill' : 'Additional order — items below join this table as a new kitchen ticket'}</p>}</div>{readyItems > 0 && <span className="ready-alert"><BellRing size={15} />{readyItems} item{readyItems > 1 ? 's' : ''} ready</span>}<div className="waiter-session-actions">{!correctionSession && isParcelTable(table) && canOpenSession && <button type="button" className="button button-danger-soft waiter-request-bill-desktop" disabled={busy} onClick={() => setCancelParcelOpen(true)}><Ban size={15} />Cancel parcel</button>}{!correctionSession && can(session, 'billing.request') && <button type="button" className="button button-secondary waiter-request-bill-desktop" disabled={busy || active.status !== 'occupied'} onClick={() => void requestBill()}><ReceiptText size={15} />Request bill</button>}</div></div>
           <div className="waiter-search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search menu, SKU or barcode" inputMode="search" />{search ? <button type="button" className="search-clear" aria-label="Clear search" onClick={() => setSearch('')}><X size={16} /></button> : null}</div>
           {quickProducts.length > 0 && <div className="quick-order-strip" aria-label="Quick add"><span>Quick</span><div>{quickProducts.map((product) => { const item = cart[product.id]; return <button type="button" key={product.id} className={`quick-chip${item ? ' in-cart' : ''}${product.is_quick ? ' pinned' : ''}`} onClick={() => changeCart(product, 1)}><strong>{product.is_quick ? <Pin size={12} /> : null}{product.name}</strong>{item ? <b>{item.quantity}</b> : null}</button> })}</div></div>}
           <div className="category-tabs" role="tablist" aria-label="Menu categories"><button type="button" className={category === 'all' ? 'selected' : ''} onClick={() => setCategory('all')}>All menu</button>{categories.map((entry) => <button type="button" key={entry.id} className={category === entry.id ? 'selected' : ''} onClick={() => setCategory((current) => current === entry.id ? 'all' : entry.id)}>{entry.name}</button>)}</div>

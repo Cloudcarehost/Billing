@@ -39,13 +39,15 @@ class OrderService
             $this->synchronizeStatus($item->order);
             $this->recalculate($session);
             $session->load(['diningTable', 'waiter', 'joinedTables:id,name', 'orders.items']);
-            RestaurantRealtime::dispatchToMembers('item_cancelled', $session, [
+            if (! ($session->correction_of_invoice_id && $session->status === 'closed')) {
+                RestaurantRealtime::dispatchToMembers('item_cancelled', $session, [
                 'status' => 'cancelled',
                 'reason' => $reason,
                 'item_name' => $cancelled->item_name,
                 'quantity' => $cancelled->quantity,
                 'kitchen_item' => RestaurantRealtime::kitchenItem($cancelled),
-            ], $cancelled->order_id, $cancelled->id, $cancelled->kitchen_station_id);
+                ], $cancelled->order_id, $cancelled->id, $cancelled->kitchen_station_id);
+            }
             OpenBillSnapshotService::queue($session->hotel_id);
 
             return $cancelled->fresh();

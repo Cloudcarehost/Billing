@@ -236,8 +236,13 @@ class DiningBillingService
     {
         return DB::transaction(function () use ($session, $user, $items, $notes) {
             $session = DiningSession::query()->with(['hotel', 'outlet'])->lockForUpdate()->findOrFail($session->id);
-            DiningSessionGuard::assertOccupied($session);
-            $directBill = $session->outlet?->order_flow === OutletOrderFlow::DirectBill->value;
+            $billingOnlyCorrection = $session->status === 'closed' && $session->correction_of_invoice_id;
+            if (! $billingOnlyCorrection) {
+                DiningSessionGuard::assertOccupied($session);
+            } elseif ($session->invoice()->exists()) {
+                $this->invalid('session', 'This corrected bill has already been finalised.');
+            }
+            $directBill = $billingOnlyCorrection || $session->outlet?->order_flow === OutletOrderFlow::DirectBill->value;
             $round = ((int) $session->orders()->lockForUpdate()->max('round_number')) + 1;
             $order = $session->orders()->create(['created_by' => $user->id, 'ticket_number' => "ORD-{$session->id}-{$round}", 'round_number' => $round, 'sent_at' => now(), 'notes' => $notes]);
             $products = Product::query()->where('hotel_id', $session->hotel_id)->whereIn('id', collect($items)->pluck('product_id'))->where('is_active', true)->get()->keyBy('id');
@@ -288,7 +293,9 @@ class DiningBillingService
                 $liveTicket = RestaurantRealtime::liveTicket($order);
                 $payload['live_ticket'] = count($liveTicket['items']) > 0 ? $liveTicket : null;
             }
-            RestaurantRealtime::dispatchToMembers('order_sent', $session, $payload, $order->id);
+            if (! $billingOnlyCorrection) {
+                RestaurantRealtime::dispatchToMembers('order_sent', $session, $payload, $order->id);
+            }
             OpenBillSnapshotService::queue($session->hotel_id);
 
             return $session->fresh();
@@ -357,7 +364,7 @@ class DiningBillingService
     {
         return DB::transaction(function () use ($session, $user, $reason, $audit) {
             $session = DiningSession::query()->with('orders.items')->lockForUpdate()->findOrFail($session->id);
-            if ($session->status !== 'pending_bill') {
+            if ($session->status !== 'pending_bill' && ! $session->correction_of_invoice_id) {
                 $this->invalid('session', 'Request the bill before closing a zero-value session without a sale.');
             }
             if ($session->invoice()->exists()) {
@@ -371,6 +378,7 @@ class DiningBillingService
             $session->update([
                 'status' => 'closed',
                 'closed_at' => now(),
+                'correction_of_invoice_id' => null,
                 'closed_without_sale_by' => $user->id,
                 'closed_without_sale_reason' => $reason,
             ]);
@@ -422,7 +430,7 @@ class DiningBillingService
     {
         return DB::transaction(function () use ($session, $amount, $percent) {
             $session = DiningSession::query()->lockForUpdate()->findOrFail($session->id);
-            if (! in_array($session->status, ['occupied', 'pending_bill'], true) || $session->invoice()->exists()) {
+            if ((! in_array($session->status, ['occupied', 'pending_bill'], true) && ! $session->correction_of_invoice_id) || $session->invoice()->exists()) {
                 $this->invalid('session', 'Discounts can only be changed before an invoice is created.');
             }
             $session->refreshTotals();
@@ -456,7 +464,8 @@ class DiningBillingService
     {
         return DB::transaction(function () use ($session, $user, $hotel, $guest) {
             $session = DiningSession::query()->with('orders.items.product.category', 'customer')->lockForUpdate()->findOrFail($session->id);
-            if ($session->status !== 'pending_bill') {
+            $billingCorrection = $session->status === 'closed' && $session->correction_of_invoice_id;
+            if ($session->status !== 'pending_bill' && ! $billingCorrection) {
                 $this->invalid('session', 'Request the bill before creating an invoice.');
             }
             if ($session->invoice()->exists()) {
@@ -476,7 +485,7 @@ class DiningBillingService
                 $session->update(['customer_id' => $guest['customer_id']]);
             }
             $chargedToId = $guest['charged_to_user_id'] ?? null;
-            $invoice = Invoice::query()->create(['hotel_id' => $session->hotel_id, 'outlet_id' => $session->outlet_id, 'customer_id' => $guest['customer_id'], 'dining_session_id' => $session->id, 'created_by' => $user->id, 'charged_to_user_id' => $chargedToId, 'invoice_number' => sprintf('%s-%s-%06d', $outlet->invoice_prefix, $period, $number), 'status' => InvoiceStatus::Issued->value, 'payment_status' => PaymentStatus::Unpaid->value, 'business_date' => $businessDate, 'billed_at' => now(), 'customer_name' => $guest['customer_name'], 'customer_phone' => $guest['customer_phone'], 'customer_email' => $guest['customer_email'], 'customer_gstin' => $guest['customer_gstin'], 'subtotal' => $session->subtotal, 'discount_amount' => $session->discount_amount, 'tax_amount' => $session->tax_amount, 'cgst_amount' => $cgst, 'sgst_amount' => $sgst, 'service_charge_amount' => $session->service_charge_amount, 'total_amount' => $session->total_amount, 'balance_amount' => $session->total_amount]);
+            $invoice = Invoice::query()->create(['hotel_id' => $session->hotel_id, 'outlet_id' => $session->outlet_id, 'customer_id' => $guest['customer_id'], 'dining_session_id' => $session->id, 'created_by' => $user->id, 'charged_to_user_id' => $chargedToId, 'replaces_invoice_id' => $session->correction_of_invoice_id, 'invoice_number' => sprintf('%s-%s-%06d', $outlet->invoice_prefix, $period, $number), 'status' => InvoiceStatus::Issued->value, 'payment_status' => PaymentStatus::Unpaid->value, 'business_date' => $businessDate, 'billed_at' => now(), 'customer_name' => $guest['customer_name'], 'customer_phone' => $guest['customer_phone'], 'customer_email' => $guest['customer_email'], 'customer_gstin' => $guest['customer_gstin'], 'subtotal' => $session->subtotal, 'discount_amount' => $session->discount_amount, 'tax_amount' => $session->tax_amount, 'cgst_amount' => $cgst, 'sgst_amount' => $sgst, 'service_charge_amount' => $session->service_charge_amount, 'total_amount' => $session->total_amount, 'balance_amount' => $session->total_amount]);
             foreach ($session->orders->flatMap->items->where('status', '!=', 'cancelled') as $item) {
                 [$itemCgst, $itemSgst] = Money::splitHalves($item->tax_amount);
                 $invoice->items()->create([
@@ -505,12 +514,15 @@ class DiningBillingService
             }
 
             ReportService::invalidateDashboard($invoice->hotel_id);
-            RestaurantRealtime::dispatchToMembers('invoice_created', $session->load('diningTable', 'waiter', 'invoice', 'joinedTables:id,name'), [
-                'invoice_id' => $invoice->id,
-                'invoice_number' => $invoice->invoice_number,
-            ]);
+            if (! $billingCorrection) {
+                RestaurantRealtime::dispatchToMembers('invoice_created', $session->load('diningTable', 'waiter', 'invoice', 'joinedTables:id,name'), [
+                    'invoice_id' => $invoice->id,
+                    'invoice_number' => $invoice->invoice_number,
+                ]);
+            }
+            $session->update(['correction_of_invoice_id' => null]);
 
-            return $invoice->load('items', 'payments', 'diningSession.diningTable', 'chargedTo:id,name');
+            return $invoice->load('items', 'payments', 'diningSession.diningTable', 'chargedTo:id,name', 'replaces:id,invoice_number,status');
         });
     }
 
@@ -531,7 +543,16 @@ class DiningBillingService
             $totalMinor = Money::toMinor($invoice->total_amount);
             $balanceMinor = max(0, $totalMinor - $paidMinor);
             $invoice->update(['paid_amount' => Money::fromMinor($paidMinor), 'balance_amount' => Money::fromMinor($balanceMinor), 'payment_status' => $balanceMinor === 0 ? PaymentStatus::Paid->value : PaymentStatus::Partial->value]);
-            if ($balanceMinor === 0 && $invoice->diningSession) {
+            app(InvoiceReceivableService::class)->settleIfPaid($invoice, $user);
+            if ($invoice->receivable()->exists()) {
+                RestaurantUpdated::dispatch('receivable_updated', $invoice->hotel_id, $invoice->outlet_id, null, $invoice->dining_session_id, null, null, null, null, [
+                    'invoice_id' => $invoice->id,
+                    'payment_status' => $invoice->payment_status,
+                    'paid_amount' => $invoice->paid_amount,
+                    'balance_amount' => $invoice->balance_amount,
+                ]);
+            }
+            if ($balanceMinor === 0 && $invoice->diningSession && $invoice->diningSession->status !== 'closed') {
                 $invoice->diningSession()->update(['status' => 'closed', 'closed_at' => now()]);
                 $closed = $invoice->diningSession->fresh();
                 if ($closed) {
@@ -540,7 +561,7 @@ class DiningBillingService
             }
             ReportService::invalidateDashboard($invoice->hotel_id);
 
-            return $invoice->fresh()->load('items', 'payments.receiver:id,name', 'diningSession.diningTable');
+            return $invoice->fresh()->load('items', 'payments.receiver:id,name', 'diningSession.diningTable', 'chargedTo:id,name', 'receivable.assignee:id,name', 'replaces:id,invoice_number,status', 'replacement:id,invoice_number,status,replaces_invoice_id');
         });
     }
 

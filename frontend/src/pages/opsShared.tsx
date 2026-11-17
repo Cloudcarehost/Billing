@@ -34,8 +34,9 @@ export function sessionDisplayName(session: { display_name?: string; dining_tabl
   const names = [session?.dining_table?.name, ...(session?.joined_tables ?? []).map((entry) => entry.name)].filter(Boolean)
   return names.length ? names.join(', ') : fallback
 }
-export function sessionCanTakeOrders(session?: { status?: string; invoice?: { id?: number } | null } | null) {
+export function sessionCanTakeOrders(session?: { status?: string; invoice?: { id?: number } | null; correction_of_invoice_id?: number | null } | null) {
   if (!session || session.invoice) return false
+  if (session.correction_of_invoice_id) return true
   return session.status === 'occupied' || session.status === 'pending_bill'
 }
 export function isDirectBillOutlet(outlets: Session['outlets'] | undefined, outletId: number | null | undefined) {

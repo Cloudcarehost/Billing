@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Services\AuditService;
 use App\Services\DiningBillingService;
 use App\Services\InvoiceService;
+use App\Services\InvoiceReceivableService;
 use App\Services\PaymentService;
 use App\Support\Money;
 use Illuminate\Http\JsonResponse;
@@ -84,6 +85,9 @@ class InvoiceController extends ApiController
                 'customer:id,name,phone',
                 'chargedTo:id,name',
                 'creator:id,name',
+                'receivable.assignee:id,name',
+                'replaces:id,invoice_number,status',
+                'replacement:id,invoice_number,status,replaces_invoice_id',
                 'diningSession.diningTable:id,name,code,service_type',
                 'payments:id,invoice_id,method,type,amount',
             ])
@@ -142,6 +146,28 @@ class InvoiceController extends ApiController
         return $this->success($this->ownerAccounts($request));
     }
 
+    public function assignees(Request $request): JsonResponse
+    {
+        $hotel = $request->attributes->get('currentHotel');
+
+        return $this->success($hotel->users()
+            ->wherePivot('is_active', true)
+            ->orderBy('users.name')
+            ->get(['users.id', 'users.name'])
+            ->map(fn (User $user) => ['id' => $user->id, 'name' => $user->name])
+            ->values());
+    }
+
+    public function keepPending(Request $request, int $invoice, InvoiceReceivableService $service, AuditService $audit): JsonResponse
+    {
+        return $this->defer($request, $invoice, $service, $audit, 'customer_pending');
+    }
+
+    public function closeOwnerAccount(Request $request, int $invoice, InvoiceReceivableService $service, AuditService $audit): JsonResponse
+    {
+        return $this->defer($request, $invoice, $service, $audit, 'owner_account');
+    }
+
     public function reopen(Request $request, int $invoice, InvoiceService $service, AuditService $audit): JsonResponse
     {
         $hotel = $request->attributes->get('currentHotel');
@@ -194,13 +220,36 @@ class InvoiceController extends ApiController
 
     private function invoice(Invoice $invoice): Invoice
     {
-        $invoice->load('outlet:id,name,code', 'customer:id,name,phone,email,gstin', 'creator:id,name', 'chargedTo:id,name', 'items.product:id,name,sku', 'payments.receiver:id,name', 'diningSession.diningTable');
+        $invoice->load('outlet:id,name,code', 'customer:id,name,phone,email,gstin', 'creator:id,name', 'chargedTo:id,name', 'items.product:id,name,sku', 'payments.receiver:id,name', 'diningSession.diningTable', 'receivable.assignee:id,name', 'receivable.opener:id,name', 'receivable.settler:id,name', 'replaces:id,invoice_number,status', 'replacement:id,invoice_number,status,replaces_invoice_id');
         $refunded = $invoice->payments->where('type', 'refund')->groupBy('refunded_payment_id')->map(fn ($rows) => $rows->sum(fn ($payment) => abs(Money::toMinor($payment->amount))));
         $invoice->payments->each(function ($payment) use ($refunded): void {
             $payment->setAttribute('refunded_amount', Money::fromMinor((int) ($refunded[$payment->id] ?? 0)));
         });
 
         return $invoice;
+    }
+
+    private function defer(Request $request, int $invoiceId, InvoiceReceivableService $service, AuditService $audit, string $type): JsonResponse
+    {
+        $hotel = $request->attributes->get('currentHotel');
+        $invoice = Invoice::query()->where('hotel_id', $hotel->id)->whereIn('outlet_id', $request->attributes->get('accessibleOutletIds', []))->findOrFail($invoiceId);
+        $customerPending = $type === 'customer_pending';
+        $data = $request->validate([
+            'customer_name' => [$customerPending ? 'required' : 'nullable', 'string', 'max:120'],
+            'customer_phone' => [$customerPending ? 'required' : 'nullable', 'string', 'max:30'],
+            'customer_email' => ['nullable', 'email', 'max:255'],
+            'customer_gstin' => ['nullable', 'string', 'max:20'],
+            'assigned_to_user_id' => [$customerPending ? 'required' : 'nullable', 'integer'],
+            'note' => ['nullable', 'string', 'max:2000'],
+        ]);
+        $assigneeId = $data['assigned_to_user_id'] ?? $invoice->charged_to_user_id;
+        if ($assigneeId) {
+            $active = $hotel->users()->wherePivot('is_active', true)->where('users.id', $assigneeId)->exists();
+            abort_unless($active, 422, 'Select an active user from this hotel.');
+            $data['assigned_to_user_id'] = (int) $assigneeId;
+        }
+
+        return $this->success($service->keepPending($invoice, $request->user(), $data, $type, $audit), $type === 'owner_account' ? 'Owner account saved and table released.' : 'Outstanding bill saved and table released.');
     }
 
     /** @return array<int, array{id: int, name: string}> */

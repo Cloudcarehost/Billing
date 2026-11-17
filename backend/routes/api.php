@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\HealthController;
 use App\Http\Controllers\Api\HotelController;
 use App\Http\Controllers\Api\InventoryController;
 use App\Http\Controllers\Api\InvoiceController;
+use App\Http\Controllers\Api\InvoiceReceivableController;
 use App\Http\Controllers\Api\KitchenController;
 use App\Http\Controllers\Api\KitchenStationController;
 use App\Http\Controllers\Api\OnboardingController;
@@ -166,6 +167,10 @@ Route::prefix('v1')->group(function (): void {
         Route::post('invoices/{invoice}/void', [InvoiceController::class, 'void'])->middleware('permission:billing.void');
         Route::post('invoices/{invoice}/reopen', [InvoiceController::class, 'reopen'])->middleware('permission:billing.create');
         Route::get('billing-owners', [InvoiceController::class, 'owners'])->middleware('permission:billing.view');
+        Route::get('billing-assignees', [InvoiceController::class, 'assignees'])->middleware('permission:billing.view');
+        Route::post('invoices/{invoice}/keep-pending', [InvoiceController::class, 'keepPending'])->middleware(['permission:billing.create', 'idempotent:receivable']);
+        Route::post('invoices/{invoice}/close-owner-account', [InvoiceController::class, 'closeOwnerAccount'])->middleware(['permission:billing.create', 'idempotent:receivable']);
+        Route::get('invoice-receivables', [InvoiceReceivableController::class, 'index'])->middleware('permission:dashboard.view');
         Route::post('invoices/{invoice}/reprint', [InvoiceController::class, 'reprint'])->middleware('permission:billing.view');
         Route::post('invoices/{invoice}/payments/{payment}/refund', [InvoiceController::class, 'refund'])->middleware('permission:billing.refund');
         Route::get('kitchen-stations/{station}/queue', [KitchenController::class, 'queue'])->middleware('permission:kitchen.view');
