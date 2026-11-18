@@ -199,7 +199,8 @@ export function BillingPage() {
       setSelectedSession(updated)
       await loadTables()
       if (closeDialog) setAddTarget(null)
-      setNotice(`Added ${qtyLabel(qty)} × ${group.item_name}.`)
+      const tableCodes = [updated.dining_table?.code, ...(updated.joined_tables ?? []).map((table) => table.code)].filter((code): code is string => Boolean(code)).join('/')
+      setNotice(`Added ${qtyLabel(qty)} × ${group.item_name}${tableCodes ? ` to ${tableCodes}` : ''}.`)
     } catch (requestError) { setError(errorMessage(requestError)) } finally { setBusy(false) }
   }
   const addUnit = async (group: BillLineGroup<OrderItem>) => addQuantity(group, '1')

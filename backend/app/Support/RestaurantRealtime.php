@@ -103,7 +103,7 @@ class RestaurantRealtime
      */
     public static function liveTicket(Order $order): array
     {
-        $order->loadMissing(['items', 'diningSession.diningTable:id,name,code', 'diningSession.joinedTables:id,name', 'creator:id,name']);
+        $order->loadMissing(['items.product:id,serving_size', 'diningSession.diningTable:id,name,code', 'diningSession.joinedTables:id,name', 'creator:id,name']);
         $session = $order->diningSession;
         $active = $order->items
             ->where('service_route', FulfillmentMode::Kitchen->value)
@@ -122,6 +122,8 @@ class RestaurantRealtime
                 'id' => $item->id,
                 'item_name' => $item->item_name,
                 'quantity' => (string) $item->quantity,
+                'serving_size' => $item->product?->serving_size,
+                'unit_price' => (string) $item->unit_price,
             ])->values()->all(),
         ];
     }

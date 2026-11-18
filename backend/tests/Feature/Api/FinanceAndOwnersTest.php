@@ -126,6 +126,20 @@ class FinanceAndOwnersTest extends TestCase
         $this->postJson('/api/v1/finance/daily-register', [
             'business_date' => '2026-11-16', 'actual_online' => 1, 'actual_cash' => 1,
         ])->assertUnprocessable();
+
+        $this->postJson('/api/v1/finance/daily-register', [
+            'business_date' => '2026-11-14', 'actual_cash' => 350,
+        ])->assertCreated()
+            ->assertJsonPath('data.actual_online', null)
+            ->assertJsonPath('data.actual_cash', '350.00');
+        $this->getJson('/api/v1/finance/daily-register?from=2026-11-14&to=2026-11-14')
+            ->assertOk()
+            ->assertJsonPath('data.rows.0.status', 'partial')
+            ->assertJsonPath('data.rows.0.actual_total', '350.00')
+            ->assertJsonPath('data.rows.0.difference', null);
+        $this->postJson('/api/v1/finance/daily-register', [
+            'business_date' => '2026-11-13',
+        ])->assertUnprocessable();
     }
 
     public function test_a_second_owner_can_be_assigned_and_the_last_owner_cannot_be_removed(): void

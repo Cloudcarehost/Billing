@@ -24,7 +24,7 @@ class LiveBoardTest extends TestCase
         $station = KitchenStation::query()->create(['outlet_id' => $outlet->id, 'name' => 'Hot Kitchen', 'code' => 'HOT']);
         $outlet->update(['order_flow' => 'direct_bill']);
         $water = Product::query()->create(['hotel_id' => $hotel->id, 'fulfillment_mode' => 'direct', 'name' => 'Water Bottle', 'selling_price' => 40, 'track_inventory' => false]);
-        $curry = Product::query()->create(['hotel_id' => $hotel->id, 'kitchen_station_id' => $station->id, 'fulfillment_mode' => 'kitchen', 'name' => 'Curry', 'selling_price' => 100, 'track_inventory' => false]);
+        $curry = Product::query()->create(['hotel_id' => $hotel->id, 'kitchen_station_id' => $station->id, 'fulfillment_mode' => 'kitchen', 'name' => 'Curry', 'serving_size' => '250 g', 'selling_price' => 100, 'track_inventory' => false]);
         $dal = Product::query()->create(['hotel_id' => $hotel->id, 'kitchen_station_id' => $station->id, 'fulfillment_mode' => 'kitchen', 'name' => 'Dal', 'selling_price' => 80, 'track_inventory' => false]);
         $table = DiningTable::query()->create(['outlet_id' => $outlet->id, 'name' => 'Table 2', 'code' => 'T2', 'capacity' => 4]);
         $sessionId = $this->actingAs($owner, 'web')->postJson("/api/v1/tables/{$table->id}/sessions")->json('data.id');
@@ -47,6 +47,8 @@ class LiveBoardTest extends TestCase
             ->assertJsonCount(0, 'data.done');
         $this->assertSame([$mixedOrder->id, $kitchenOrder->id], collect($board->json('data.queue'))->pluck('id')->all());
         $this->assertSame(['Curry', 'Dal'], collect($board->json('data.queue.0.items'))->pluck('item_name')->all());
+        $board->assertJsonPath('data.queue.0.items.0.serving_size', '250 g')
+            ->assertJsonPath('data.queue.0.items.0.unit_price', '100.00');
         $this->assertNotContains($directOrder->id, collect($board->json('data.queue'))->pluck('id')->all());
 
         $itemsBefore = $mixedOrder->items()->get()->mapWithKeys(fn (OrderItem $item) => [$item->id => [$item->status, $item->ready_at?->toISOString()]]);

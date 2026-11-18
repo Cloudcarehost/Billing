@@ -151,7 +151,7 @@ class FinanceController extends ApiController
             ->where('outlet_id', $outletId)
             ->findOrFail($register);
         $before = $register->only(['business_date', 'actual_online', 'actual_cash', 'notes']);
-        $data = $this->dailyRegisterData($request, true);
+        $data = $this->dailyRegisterData($request, $register);
         if (isset($data['business_date'])) {
             $duplicate = DailyMoneyRegister::query()
                 ->where('outlet_id', $outletId)
@@ -217,15 +217,23 @@ class FinanceController extends ApiController
     }
 
     /** @return array{business_date?: string, actual_online?: float, actual_cash?: float, notes?: ?string} */
-    private function dailyRegisterData(Request $request, bool $updating = false): array
+    private function dailyRegisterData(Request $request, ?DailyMoneyRegister $register = null): array
     {
         $hotel = $request->attributes->get('currentHotel');
+        $updating = $register !== null;
         $data = $request->validate([
             'business_date' => [$updating ? 'sometimes' : 'required', 'date', 'before_or_equal:'.HotelDate::businessDate($hotel)],
-            'actual_online' => [$updating ? 'sometimes' : 'required', 'numeric', 'min:0', 'max:999999999999.99'],
-            'actual_cash' => [$updating ? 'sometimes' : 'required', 'numeric', 'min:0', 'max:999999999999.99'],
+            'actual_online' => [$updating ? 'sometimes' : 'required_without:actual_cash', 'nullable', 'numeric', 'min:0', 'max:999999999999.99'],
+            'actual_cash' => [$updating ? 'sometimes' : 'required_without:actual_online', 'nullable', 'numeric', 'min:0', 'max:999999999999.99'],
             'notes' => ['nullable', 'string', 'max:1000'],
         ]);
+        $actualOnline = array_key_exists('actual_online', $data) ? $data['actual_online'] : $register?->actual_online;
+        $actualCash = array_key_exists('actual_cash', $data) ? $data['actual_cash'] : $register?->actual_cash;
+        if ($actualOnline === null && $actualCash === null) {
+            throw ValidationException::withMessages([
+                'actual_online' => ['Enter either the online balance or the cash balance.'],
+            ]);
+        }
         if (array_key_exists('notes', $data)) {
             $data['notes'] = filled($data['notes']) ? trim((string) $data['notes']) : null;
         }

@@ -59,7 +59,7 @@ class DailyMoneyRegisterService
             ->latest('business_date')
             ->first();
         $carriedTotal = $prior
-            ? Money::toMinor($prior->actual_online) + Money::toMinor($prior->actual_cash)
+            ? Money::toMinor($prior->actual_online ?? 0) + Money::toMinor($prior->actual_cash ?? 0)
             : 0;
 
         $rows = [];
@@ -76,10 +76,11 @@ class DailyMoneyRegisterService
             $expected = $carriedTotal + $received + $otherIncome - $expense;
             /** @var DailyMoneyRegister|null $register */
             $register = $registers->get($date);
-            $actualOnline = $register ? Money::toMinor($register->actual_online) : null;
-            $actualCash = $register ? Money::toMinor($register->actual_cash) : null;
-            $actualTotal = $register ? $actualOnline + $actualCash : null;
-            $difference = $actualTotal === null ? null : $actualTotal - $expected;
+            $actualOnline = $register?->actual_online !== null ? Money::toMinor($register->actual_online) : null;
+            $actualCash = $register?->actual_cash !== null ? Money::toMinor($register->actual_cash) : null;
+            $actualTotal = $register ? ($actualOnline ?? 0) + ($actualCash ?? 0) : null;
+            $completeBalance = $actualOnline !== null && $actualCash !== null;
+            $difference = $completeBalance ? $actualTotal - $expected : null;
 
             $rows[] = [
                 'business_date' => $date,
@@ -93,7 +94,7 @@ class DailyMoneyRegisterService
                 'actual_cash' => $actualCash === null ? null : Money::fromMinor($actualCash),
                 'actual_total' => $actualTotal === null ? null : Money::fromMinor($actualTotal),
                 'difference' => $difference === null ? null : Money::fromMinor($difference),
-                'status' => $difference === null ? 'not_entered' : ($difference === 0 ? 'matched' : ($difference < 0 ? 'short' : 'over')),
+                'status' => ! $register ? 'not_entered' : (! $completeBalance ? 'partial' : ($difference === 0 ? 'matched' : ($difference < 0 ? 'short' : 'over'))),
                 'notes' => $register?->notes,
                 'created_by' => $register?->creator ? ['id' => $register->creator->id, 'name' => $register->creator->name] : null,
                 'updated_by' => $register?->updater ? ['id' => $register->updater->id, 'name' => $register->updater->name] : null,
@@ -102,7 +103,7 @@ class DailyMoneyRegisterService
             $periodCollections += $received;
             $periodExpenses += $expense;
             $periodIncome += $otherIncome;
-            $carriedTotal = $actualTotal ?? $expected;
+            $carriedTotal = $completeBalance ? $actualTotal : $expected;
             $cursor = $cursor->addDay();
         }
 
@@ -116,8 +117,8 @@ class DailyMoneyRegisterService
                 'collections' => Money::fromMinor($periodCollections),
                 'expenses' => Money::fromMinor($periodExpenses),
                 'other_income' => Money::fromMinor($periodIncome),
-                'actual_online' => $latest ? Money::fromMinor(Money::toMinor($latest->actual_online)) : '0.00',
-                'actual_cash' => $latest ? Money::fromMinor(Money::toMinor($latest->actual_cash)) : '0.00',
+                'actual_online' => $latest?->actual_online !== null ? Money::fromMinor(Money::toMinor($latest->actual_online)) : null,
+                'actual_cash' => $latest?->actual_cash !== null ? Money::fromMinor(Money::toMinor($latest->actual_cash)) : null,
             ],
             'calculation' => $calculation,
             'rows' => array_reverse($rows),

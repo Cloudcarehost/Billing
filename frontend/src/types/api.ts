@@ -24,7 +24,7 @@ export type DailyMoneyRegisterRow = {
   actual_cash: string | null
   actual_total: string | null
   difference: string | null
-  status: 'not_entered' | 'matched' | 'short' | 'over'
+  status: 'not_entered' | 'partial' | 'matched' | 'short' | 'over'
   notes?: string | null
   created_by?: { id: number; name: string } | null
   updated_by?: { id: number; name: string } | null
@@ -32,7 +32,7 @@ export type DailyMoneyRegisterRow = {
 export type DailyMoneyRegisterOverview = {
   period: { from: string; to: string }
   outlet_id: number
-  summary: { collections: string; expenses: string; other_income: string; actual_online: string; actual_cash: string }
+  summary: { collections: string; expenses: string; other_income: string; actual_online: string | null; actual_cash: string | null }
   calculation: DailyMoneyRegisterRow | null
   rows: DailyMoneyRegisterRow[]
 }
@@ -53,7 +53,7 @@ export type Product = { id: number; hotel_id: number; category_id: number | null
 export type PopularProduct = { product_id: number; quantity: number }
 export type OrderItem = { id: number; product_id?: number | null; item_name: string; quantity: string; unit_price: string; tax_amount: string; line_subtotal?: string; line_total: string; fulfillment_mode: 'kitchen' | 'direct'; service_route?: 'kitchen' | 'direct'; status: 'pending' | 'preparing' | 'ready' | 'served' | 'cancelled'; tracked_done_at?: string | null; kitchen_note?: string | null; kitchen_station_id?: number | null; created_at?: string; preparing_at?: string | null; ready_at?: string | null; served_at?: string | null; print_on_bill?: boolean; product?: { id?: number; name?: string; sku?: string | null; category?: Pick<Category, 'id' | 'name' | 'print_on_bill'> | null } | null; order?: Order }
 export type Order = { id: number; ticket_number: string; round_number: number; status: string; sent_at?: string; tracked_done_at?: string | null; items: OrderItem[]; dining_session?: DiningSession; creator?: { id: number; name: string } }
-export type LiveTicket = { id: number; ticket_number: string; round_number: number; sent_at?: string | null; tracked_done_at?: string | null; session_id: number; table_name: string; creator_name?: string | null; items: Array<{ id: number; item_name: string; quantity: string }> }
+export type LiveTicket = { id: number; ticket_number: string; round_number: number; sent_at?: string | null; tracked_done_at?: string | null; session_id: number; table_name: string; creator_name?: string | null; items: Array<{ id: number; item_name: string; quantity: string; serving_size?: string | null; unit_price: string }> }
 export type Payment = { id: number; method: 'cash' | 'card' | 'upi'; amount: string; paid_at: string; status?: string; type?: 'payment' | 'refund'; refunded_amount?: string }
 export type InvoiceReceivable = { id: number; type: 'customer_pending' | 'owner_account'; status: 'open' | 'settled' | 'voided'; note?: string | null; opened_at: string; settled_at?: string | null; assignee?: { id: number; name: string } | null; opener?: { id: number; name: string } | null; settler?: { id: number; name: string } | null; outlet?: Pick<Outlet, 'id' | 'name'>; invoice?: Invoice }
 export type Invoice = { id: number; invoice_number: string; status: string; payment_status: 'unpaid' | 'partial' | 'paid'; billed_at?: string; business_date?: string; subtotal?: string; tax_amount?: string; discount_amount?: string; total_amount: string; paid_amount: string; balance_amount: string; reprint_count?: number; customer_name?: string | null; customer_phone?: string | null; customer_email?: string | null; customer_gstin?: string | null; charged_to_user_id?: number | null; charged_to?: { id: number; name: string } | null; creator?: { id: number; name: string } | null; table_name?: string | null; service_type?: 'dine_in' | 'parcel'; payment_methods?: string[]; items?: Array<OrderItem & { category_name?: string | null; print_on_bill?: boolean; serving_size?: string | null; hsn_code?: string | null; tax_type?: string | null; unit_cost?: string }>; payments?: Payment[]; dining_session?: DiningSession; receivable?: InvoiceReceivable | null; replaces?: Pick<Invoice, 'id' | 'invoice_number' | 'status'> | null; replacement?: Pick<Invoice, 'id' | 'invoice_number' | 'status'> | null }
