@@ -24,6 +24,7 @@ export type ThermalReceiptInput = {
   invoice: Invoice
   items: ReceiptItem[]
   duplicate: boolean
+  mobileLayout?: boolean
 }
 
 const escapeHtml = (value: string) => value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character] ?? character)
@@ -59,9 +60,14 @@ export function openThermalReceiptWindow() {
   return popup
 }
 
+function mobilePrintSource() {
+  if (typeof window === 'undefined') return false
+  return window.matchMedia('(max-width: 760px)').matches || Math.min(window.screen.width, window.screen.height) <= 760
+}
+
 export function writeThermalReceipt(popup: Window, input: ThermalReceiptInput) {
   popup.document.open()
-  popup.document.write(thermalReceiptHtml(input))
+  popup.document.write(thermalReceiptHtml({ ...input, mobileLayout: input.mobileLayout ?? mobilePrintSource() }))
   popup.document.close()
 }
 
@@ -73,7 +79,7 @@ export function printThermalReceipt(input: ThermalReceiptInput) {
 }
 
 export function thermalReceiptHtml(input: ThermalReceiptInput) {
-  const { hotel, outlet, tableName, invoice, duplicate, serviceLabel = 'Dine In' } = input
+  const { hotel, outlet, tableName, invoice, duplicate, mobileLayout = false, serviceLabel = 'Dine In' } = input
   const printable = input.items.filter(printsOnCustomerBill)
   const internal = input.items.filter((item) => !printsOnCustomerBill(item))
   const lines = aggregateReceiptItems(printable)
@@ -99,6 +105,7 @@ html, body {
   background: #fff; color: #000;
   font-family: Arial, Helvetica, sans-serif;
   font-weight: 700;
+  -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
   -webkit-print-color-adjust: exact; print-color-adjust: exact;
 }
 @media print {
@@ -121,7 +128,16 @@ html, body {
 .grand { margin: 2.5mm 0 0; text-align: center; font-size: 12pt; font-weight: 900; }
 .thanks { margin: 3mm 0 0; text-align: center; font-size: 10pt; font-weight: 900; }
 .feed { margin: 0; padding: 5.5mm 0 2.5mm; text-align: center; font-size: 11pt; font-weight: 900; letter-spacing: .75mm; }
-</style></head><body>
+.mobile-print-source .receipt { padding: 2mm 2mm 0; font-size: 11pt; line-height: 1.34; }
+.mobile-print-source .hotel { font-size: 14pt; }
+.mobile-print-source .muted { font-size: 10pt; }
+.mobile-print-source .head, .mobile-print-source .line { grid-template-columns: minmax(0, 1fr) 7mm 15mm 17mm; gap: .75mm; }
+.mobile-print-source .head { font-size: 9.5pt; }
+.mobile-print-source .line { font-size: 11pt; }
+.mobile-print-source .totals { font-size: 11pt; }
+.mobile-print-source .grand { font-size: 15pt; }
+.mobile-print-source .thanks, .mobile-print-source .feed { font-size: 12pt; }
+</style></head><body class="${mobileLayout ? 'mobile-print-source' : ''}">
 <main class="receipt">
   ${duplicate ? '<p class="center muted">Duplicate</p>' : '<p class="center muted">Original</p>'}
   <p class="center hotel">${escapeHtml(hotel.legal_name || hotel.name)}</p>
